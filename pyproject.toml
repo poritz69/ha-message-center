@@ -1,0 +1,34 @@
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+asyncio_mode = "auto"
+
+[tool.ruff]
+target-version = "py314"
+line-length = 88
+
+[tool.ruff.lint]
+select = [
+  "ASYNC", # blocking calls inside async code
+  "B",     # likely bugs
+  "D",     # docstrings
+  "E",     # style errors
+  "F",     # unused imports, undefined names
+  "I",     # import order
+  "RUF",   # ruff-specific checks
+  "SIM",   # simplifications
+  "UP",    # modern Python syntax
+  "W",     # whitespace
+]
+ignore = [
+  "D203",  # conflicts with D211
+  "D213",  # conflicts with D212
+]
+
+[tool.ruff.lint.pydocstyle]
+convention = "pep257"
+
+[tool.ruff.lint.isort]
+known-first-party = ["custom_components.message_center"]
+force-sort-within-sections = true
+combine-as-imports = true

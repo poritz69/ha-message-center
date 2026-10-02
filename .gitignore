@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# macOS and sync tools
+.DS_Store
+.stfolder/
+.stignore
+*.sync-conflict-*
+
+# Editors
+.idea/
+
+# Frontend preview (built by npm run preview)
+frontend/preview/preview.js

@@ -1,0 +1,74 @@
+send:
+  fields:
+    title:
+      required: true
+      example: "Feuchte: Büro"
+      selector:
+        text:
+    message:
+      required: true
+      selector:
+        text:
+          multiline: true
+    data:
+      selector:
+        object:
+    kind:
+      example: Feuchte
+      selector:
+        text:
+    priority:
+      selector:
+        number:
+          min: 1
+          max: 3
+          mode: box
+    key:
+      example: feuchte/buero
+      selector:
+        text:
+discard:
+  fields:
+    message_id:
+      example: "3c9f1e2d4b5a6978"
+      selector:
+        text:
+    origin:
+      example: automation.klima_feuchte_buero
+      selector:
+        text:
+    title:
+      example: "Feuchte: Büro"
+      selector:
+        text:
+snooze:
+  fields:
+    message_id:
+      required: true
+      selector:
+        text:
+    minutes:
+      required: true
+      default: 30
+      selector:
+        number:
+          min: 1
+          max: 10080
+          unit_of_measurement: min
+          mode: box
+forward:
+  fields:
+    message_id:
+      required: true
+      selector:
+        text:
+    note:
+      selector:
+        text:
+          multiline: true
+list:
+  fields:
+    include_history:
+      default: false
+      selector:
+        boolean:

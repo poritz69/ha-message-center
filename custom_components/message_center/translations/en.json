@@ -1,0 +1,220 @@
+{
+  "title": "Message Center",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Set up Message Center",
+        "description": "Choose the phones and tablets that receive the messages. Everything else is set afterwards on the page \"Message Center\" in the sidebar.",
+        "data": {
+          "recipients": "Recipients"
+        },
+        "data_description": {
+          "recipients": "The phones and tablets with the Home Assistant app that receive the messages. At least one. They can be changed later on the Recipients tab of the Message Center page."
+        }
+      },
+      "reconfigure": {
+        "title": "Recipients",
+        "description": "Choose the phones that receive pushes.",
+        "data": {
+          "recipients": "Recipients"
+        },
+        "data_description": {
+          "recipients": "The phones and tablets with the Home Assistant app that receive the messages. At least one. They can be changed later on the Recipients tab of the Message Center page."
+        }
+      }
+    },
+    "abort": {
+      "single_instance_allowed": "Only one message center can be set up.",
+      "no_mobile_app": "No Companion App device found. Install the Home Assistant app on a phone first.",
+      "reconfigure_successful": "Recipients updated."
+    },
+    "error": {
+      "at_least_one": "Choose at least one recipient."
+    }
+  },
+  "entity": {
+    "binary_sensor": {
+      "ready": {
+        "name": "Ready"
+      }
+    },
+    "sensor": {
+      "open": {
+        "name": "Open"
+      },
+      "disturbed": {
+        "name": "Disturbed"
+      },
+      "active_rules": {
+        "name": "Active rules"
+      },
+      "last_delivery": {
+        "name": "Last delivery"
+      },
+      "new": {
+        "name": "New"
+      }
+    },
+    "event": {
+      "delivered": {
+        "name": "Delivered",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "delivered": "Delivered"
+            }
+          }
+        }
+      }
+    },
+    "switch": {
+      "light_pulse": {
+        "name": "Light pulse"
+      },
+      "alarm": {
+        "name": "Alarm"
+      }
+    }
+  },
+  "services": {
+    "send": {
+      "name": "Send",
+      "description": "Send a message with explicit assignment (for senders that know their kind). Prefer notify.message_center for normal automations.",
+      "fields": {
+        "title": {
+          "name": "Title",
+          "description": "Short and neutral; used to tell messages apart."
+        },
+        "message": {
+          "name": "Message",
+          "description": "The text shown on the phone."
+        },
+        "data": {
+          "name": "Extra data",
+          "description": "Passed on to the phone unchanged (image, actions, ...); must be storable as JSON."
+        },
+        "kind": {
+          "name": "Kind",
+          "description": "Name or id of a message kind. An unknown kind is rejected (invalid_field)."
+        },
+        "priority": {
+          "name": "Priority",
+          "description": "1 notice, 2 important, 3 alarm (3 only if allowed in the options)."
+        },
+        "key": {
+          "name": "Key",
+          "description": "Replaces the title as the identity of the message."
+        }
+      }
+    },
+    "discard": {
+      "name": "Discard",
+      "description": "Discard open messages that have not been delivered yet. Delivered messages and the phone are untouched. Needs the right to control the Message Center entities.",
+      "fields": {
+        "message_id": {
+          "name": "Message id",
+          "description": "The id from the Open entity or the page."
+        },
+        "origin": {
+          "name": "Origin",
+          "description": "Automation the message came from."
+        },
+        "title": {
+          "name": "Title",
+          "description": "Title of the message."
+        }
+      }
+    },
+    "snooze": {
+      "name": "Snooze",
+      "description": "Put a message back and deliver it again later. Needs the right to control the Message Center entities.",
+      "fields": {
+        "message_id": {
+          "name": "Message id",
+          "description": "The id from the Open entity or the page."
+        },
+        "minutes": {
+          "name": "Minutes",
+          "description": "How long to wait."
+        }
+      }
+    },
+    "forward": {
+      "name": "Forward to assistant",
+      "description": "Hand a message with its text and a note to the assistant via the event message_center_forwarded and, if one is chosen, a script. Needs the right to control the Message Center entities.",
+      "fields": {
+        "message_id": {
+          "name": "Message id",
+          "description": "The id from the Open entity or the page."
+        },
+        "note": {
+          "name": "Note",
+          "description": "What the assistant should do with it."
+        }
+      }
+    },
+    "list": {
+      "name": "List",
+      "description": "Return all messages with state, reasons and text. Administrators only.",
+      "fields": {
+        "include_history": {
+          "name": "Include history",
+          "description": "Also return ended messages from the history store."
+        }
+      }
+    }
+  },
+  "exceptions": {
+    "not_ready": {
+      "message": "Message Center is not ready ({reason})."
+    },
+    "invalid_field": {
+      "message": "Invalid field {field}: {reason}."
+    },
+    "priority_not_allowed": {
+      "message": "Priority 3 via send is not enabled. Allow it on the settings tab of the Message Center page or use a message kind."
+    },
+    "store_full": {
+      "message": "Message Center holds 200 unfinished messages. Discard some or send held ones now on the Message Center page."
+    },
+    "not_authorized": {
+      "message": "Only administrators may list messages."
+    },
+    "not_found": {
+      "message": "No matching message."
+    },
+    "store_not_readable": {
+      "message": "Message Center cannot read its store ({error}). Home Assistant will try again."
+    }
+  },
+  "issues": {
+    "store_not_writable": {
+      "title": "Message store not writable",
+      "description": "Message Center cannot write its store and rejects new messages. Check the disk and the permissions of .storage, then restart Home Assistant."
+    },
+    "history_not_writable": {
+      "title": "Message history not writable",
+      "description": "Message Center cannot write its history file; messages are still taken and delivered. Ended messages wait in the working store, at most 1000 of them: beyond that the oldest can be lost. Check the disk and the permissions of .storage; the history is written again at the next hourly round."
+    },
+    "store_full": {
+      "title": "Message Center is full",
+      "description": "200 open messages are stored. Discard or release held messages on the page."
+    },
+    "unclear_messages": {
+      "title": "{count} message(s) with unclear delivery",
+      "description": "After a restart or a long gap it is unknown whether these messages reached the phones. Send them now or discard them on the page."
+    },
+    "rule_entity_unavailable": {
+      "title": "Rule {name} cannot read {entity_id}",
+      "description": "The entity is unavailable or missing. The rule counts as active until the entity returns. Check the helper or integration behind it."
+    },
+    "rule_max_duration": {
+      "title": "Rule {name} active longer than {hours} h",
+      "description": "The rule exceeded its maximum duration; held messages were delivered and the rule no longer applies until its entity leaves the rule state."
+    },
+    "recipient_unreachable": {
+      "title": "Recipient {name} not reachable",
+      "description": "Pushes to this phone fail for more than 15 minutes. Message Center keeps retrying for 24 hours. Check the Companion App on the phone."
+    }
+  }
+}

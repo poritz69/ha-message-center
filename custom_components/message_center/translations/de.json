@@ -1,0 +1,220 @@
+{
+  "title": "Message Center",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Message Center einrichten",
+        "description": "Wähle die Handys und Tablets, die die Meldungen bekommen. Alles Weitere stellst du danach auf der Seite „Message Center“ in der Seitenleiste ein.",
+        "data": {
+          "recipients": "Empfänger"
+        },
+        "data_description": {
+          "recipients": "Die Handys und Tablets mit der Home-Assistant-App, die die Meldungen bekommen. Mindestens eines. Später änderbar im Reiter „Empfänger“ auf der Seite des Message Center."
+        }
+      },
+      "reconfigure": {
+        "title": "Empfänger",
+        "description": "Wähle die Handys, die Pushs bekommen.",
+        "data": {
+          "recipients": "Empfänger"
+        },
+        "data_description": {
+          "recipients": "Die Handys und Tablets mit der Home-Assistant-App, die die Meldungen bekommen. Mindestens eines. Später änderbar im Reiter „Empfänger“ auf der Seite des Message Center."
+        }
+      }
+    },
+    "abort": {
+      "single_instance_allowed": "Es kann nur ein Message Center eingerichtet werden.",
+      "no_mobile_app": "Kein Gerät mit der Companion-App gefunden. Installiere zuerst die Home-Assistant-App auf einem Handy.",
+      "reconfigure_successful": "Empfänger aktualisiert."
+    },
+    "error": {
+      "at_least_one": "Wähle mindestens einen Empfänger."
+    }
+  },
+  "entity": {
+    "binary_sensor": {
+      "ready": {
+        "name": "Bereit"
+      }
+    },
+    "sensor": {
+      "open": {
+        "name": "Offen"
+      },
+      "disturbed": {
+        "name": "Gestört"
+      },
+      "active_rules": {
+        "name": "Aktive Regeln"
+      },
+      "last_delivery": {
+        "name": "Letzte Zustellung"
+      },
+      "new": {
+        "name": "Neu"
+      }
+    },
+    "event": {
+      "delivered": {
+        "name": "Zugestellt",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "delivered": "Zugestellt"
+            }
+          }
+        }
+      }
+    },
+    "switch": {
+      "light_pulse": {
+        "name": "Lichtimpuls"
+      },
+      "alarm": {
+        "name": "Alarm"
+      }
+    }
+  },
+  "services": {
+    "send": {
+      "name": "Senden",
+      "description": "Nachricht mit ausdrücklicher Zuordnung senden (für Absender, die ihre Art kennen). Für normale Automationen notify.message_center verwenden.",
+      "fields": {
+        "title": {
+          "name": "Titel",
+          "description": "Kurz und neutral; dient zum Unterscheiden der Nachrichten."
+        },
+        "message": {
+          "name": "Nachricht",
+          "description": "Der Text auf dem Handy."
+        },
+        "data": {
+          "name": "Zusatzdaten",
+          "description": "Werden unverändert ans Handy durchgereicht (Bild, Knöpfe, ...); müssen sich als JSON speichern lassen."
+        },
+        "kind": {
+          "name": "Meldungsart",
+          "description": "Name oder Kennung einer Meldungsart. Eine unbekannte Meldungsart wird abgelehnt (invalid_field)."
+        },
+        "priority": {
+          "name": "Stufe",
+          "description": "1 Hinweis, 2 Wichtig, 3 Alarm (3 nur, wenn in den Optionen erlaubt)."
+        },
+        "key": {
+          "name": "Schlüssel",
+          "description": "Ersetzt den Titel als Adresse der Nachricht."
+        }
+      }
+    },
+    "discard": {
+      "name": "Verwerfen",
+      "description": "Offene, noch nicht zugestellte Nachrichten verwerfen. Zugestellte Nachrichten und das Handy bleiben unberührt. Braucht das Recht, die Entitäten des Message Center zu steuern.",
+      "fields": {
+        "message_id": {
+          "name": "Nachrichtenkennung",
+          "description": "Die Kennung aus der Entität Offen oder der Seite."
+        },
+        "origin": {
+          "name": "Herkunft",
+          "description": "Automation, aus der die Nachricht kam."
+        },
+        "title": {
+          "name": "Titel",
+          "description": "Titel der Nachricht."
+        }
+      }
+    },
+    "snooze": {
+      "name": "Zurückstellen",
+      "description": "Nachricht zurückstellen und später erneut zustellen. Braucht das Recht, die Entitäten des Message Center zu steuern.",
+      "fields": {
+        "message_id": {
+          "name": "Nachrichtenkennung",
+          "description": "Die Kennung aus der Entität Offen oder der Seite."
+        },
+        "minutes": {
+          "name": "Minuten",
+          "description": "Wie lange gewartet wird."
+        }
+      }
+    },
+    "forward": {
+      "name": "An KI weiterreichen",
+      "description": "Nachricht mit Text und Notiz an den Assistenten weiterreichen, über das Ereignis message_center_forwarded und, falls eines gewählt ist, ein Skript. Braucht das Recht, die Entitäten des Message Center zu steuern.",
+      "fields": {
+        "message_id": {
+          "name": "Nachrichtenkennung",
+          "description": "Die Kennung aus der Entität Offen oder der Seite."
+        },
+        "note": {
+          "name": "Notiz",
+          "description": "Was die KI damit tun soll."
+        }
+      }
+    },
+    "list": {
+      "name": "Auflisten",
+      "description": "Alle Nachrichten mit Zustand, Grund und Text zurückgeben. Nur für Administratoren.",
+      "fields": {
+        "include_history": {
+          "name": "Verlauf einschließen",
+          "description": "Auch beendete Nachrichten aus dem Verlaufsspeicher zurückgeben."
+        }
+      }
+    }
+  },
+  "exceptions": {
+    "not_ready": {
+      "message": "Message Center ist nicht bereit ({reason})."
+    },
+    "invalid_field": {
+      "message": "Ungültiges Feld {field}: {reason}."
+    },
+    "priority_not_allowed": {
+      "message": "Stufe 3 über send ist nicht freigeschaltet. Im Reiter „Einstellungen“ auf der Seite des Message Center erlauben oder eine Meldungsart verwenden."
+    },
+    "store_full": {
+      "message": "Message Center hält 200 nicht abgeschlossene Meldungen. Auf der Seite des Message Center einige verwerfen oder zurückgehaltene jetzt senden."
+    },
+    "not_authorized": {
+      "message": "Nur Administratoren dürfen Meldungen auflisten."
+    },
+    "not_found": {
+      "message": "Keine passende Meldung."
+    },
+    "store_not_readable": {
+      "message": "Message Center kann seinen Speicher nicht lesen ({error}). Home Assistant versucht es erneut."
+    }
+  },
+  "issues": {
+    "store_not_writable": {
+      "title": "Speicher der Nachrichtenzentrale nicht schreibbar",
+      "description": "Message Center kann seinen Speicher nicht schreiben und lehnt neue Meldungen ab. Platte und Rechte von .storage prüfen, dann Home Assistant neu starten."
+    },
+    "history_not_writable": {
+      "title": "Verlauf der Nachrichtenzentrale nicht schreibbar",
+      "description": "Message Center kann seine Verlaufsdatei nicht schreiben; Meldungen werden weiter angenommen und zugestellt. Beendete Nachrichten warten im Arbeitsspeicher, höchstens 1000: darüber hinaus können die ältesten verloren gehen. Platte und Rechte von .storage prüfen; der Verlauf wird bei der nächsten Stundenrunde wieder geschrieben."
+    },
+    "store_full": {
+      "title": "Message Center ist voll",
+      "description": "200 offene Nachrichten sind gespeichert. Auf der Seite zurückgehaltene Nachrichten verwerfen oder senden."
+    },
+    "unclear_messages": {
+      "title": "{count} Meldung(en) mit unklarer Zustellung",
+      "description": "Nach einem Neustart oder einer langen Lücke ist unbekannt, ob diese Nachrichten die Handys erreicht haben. Auf der Seite jetzt senden oder verwerfen."
+    },
+    "rule_entity_unavailable": {
+      "title": "Zustellregel {name} kann {entity_id} nicht lesen",
+      "description": "Die Entität ist nicht verfügbar oder fehlt. Die Regel gilt als aktiv, bis die Entität zurückkehrt. Helfer oder Integration dahinter prüfen."
+    },
+    "rule_max_duration": {
+      "title": "Regel {name} länger als {hours} h aktiv",
+      "description": "Die Regel hat ihre Höchstdauer überschritten; zurückgehaltene Meldungen wurden zugestellt, und die Regel greift erst wieder, wenn ihre Entität den Regelzustand verlässt."
+    },
+    "recipient_unreachable": {
+      "title": "Empfänger {name} nicht erreichbar",
+      "description": "Pushs an dieses Handy scheitern seit mehr als 15 Minuten. Message Center versucht es 24 Stunden lang weiter. Companion-App auf dem Handy prüfen."
+    }
+  }
+}

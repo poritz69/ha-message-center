@@ -1,0 +1,86 @@
+name: Tests
+
+# Runs weekly against the minimum and the current Home Assistant version, plus
+# the newest release of the test library (which pins the beta while one exists).
+# Read-only access to the repository is all the jobs need.
+permissions:
+  contents: read
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "0 5 * * 1"
+  workflow_dispatch:
+
+jobs:
+  lint:
+    name: ruff (lint and format)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+      - name: Install ruff
+        run: pip install $(grep '^ruff==' requirements_test.txt)
+      - name: Lint
+        run: ruff check .
+      - name: Format check
+        run: ruff format --check .
+
+  frontend:
+    name: page (build matches source)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install
+        run: npm ci --no-audit --no-fund
+        working-directory: frontend
+      - name: Type check
+        run: npm run check
+        working-directory: frontend
+      - name: Build
+        run: npm run build
+        working-directory: frontend
+      - name: Bundle is up to date
+        run: git diff --exit-code -- custom_components/message_center/frontend
+
+  pytest:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    continue-on-error: ${{ matrix.experimental }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: "HA 2026.9.0 (minimum, hacs.json)"
+            install: "pytest-homeassistant-custom-component==0.13.363"
+            experimental: false
+          - name: "HA current (requirements_test.txt)"
+            install: "-r requirements_test.txt"
+            experimental: false
+          - name: "HA newest / beta"
+            install: "--upgrade pytest-homeassistant-custom-component"
+            experimental: true
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+      - name: Install test library
+        run: pip install ${{ matrix.install }}
+      - name: Install the frontend package that this Home Assistant requires
+        run: |
+          REQ=$(python -c "import json,pathlib,homeassistant.components.frontend as f; print([r for r in json.load(open(pathlib.Path(f.__file__).parent/'manifest.json'))['requirements'] if r.startswith('home-assistant-frontend')][0])")
+          pip install "$REQ"
+      - name: Show versions
+        run: pip list | grep -i -E "^(homeassistant|pytest|pytest-homeassistant-custom-component) "
+      - name: Run tests
+        run: pytest

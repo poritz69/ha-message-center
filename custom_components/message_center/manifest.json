@@ -1,0 +1,23 @@
+{
+  "domain": "message_center",
+  "name": "Message Center",
+  "after_dependencies": [
+    "mobile_app"
+  ],
+  "codeowners": [
+    "@poritz69"
+  ],
+  "config_flow": true,
+  "dependencies": [
+    "frontend",
+    "http",
+    "websocket_api"
+  ],
+  "documentation": "https://github.com/poritz69/ha-message-center",
+  "integration_type": "service",
+  "iot_class": "calculated",
+  "issue_tracker": "https://github.com/poritz69/ha-message-center/issues",
+  "requirements": [],
+  "single_config_entry": true,
+  "version": "0.11.1b1"
+}

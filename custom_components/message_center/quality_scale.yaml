@@ -1,0 +1,224 @@
+# Self-assessment against the Home Assistant integration quality scale
+# (rule list as of Home Assistant 2026.9.4, script/hassfest/quality_scale.py).
+# Own target: Bronze is mandatory where applicable, Silver is the goal.
+# Exemptions decided by the maintainer; this is not a certification by Home Assistant.
+# Assessed against the code of version 0.11.0 on 2026-10-02. "done" only where it
+# was checked in the code or the tests; a "todo" names what is missing.
+rules:
+  # Bronze
+  action-setup:
+    status: done
+    comment: The notify intake and all actions are registered in async_setup (services.py).
+  appropriate-polling:
+    status: exempt
+    comment: The integration does not poll anything.
+  brands:
+    status: done
+    comment: >-
+      icon.png and icon@2x.png in custom_components/message_center/brand/ (local
+      brand images, Home Assistant 2026.3 and newer); checked by
+      tests/test_repository_files.py.
+  common-modules:
+    status: done
+    comment: Base entity in entity.py. There is no coordinator because nothing is polled.
+  config-flow:
+    status: done
+    comment: >-
+      Set up through the UI only, with a reconfigure step and a description of the
+      field "recipients". Everything after the first setup is configured on the
+      integration's own page instead of an options flow (deliberate, see README
+      "Settings").
+  config-flow-test-coverage:
+    status: done
+    comment: tests/test_config_flow.py covers user flow, abort without a phone, second instance and reconfigure; config_flow.py is at 100 %.
+  dependency-transparency:
+    status: done
+    comment: No external requirements.
+  docs-actions:
+    status: done
+    comment: >-
+      README, "Interfaces and their contracts": fields, effect, rights, repeats
+      and the result per action, the three values of "action" in the response of
+      send, and which rejections are the center's own error codes and which are
+      Home Assistant's schema errors.
+  docs-conditions:
+    status: exempt
+    comment: The integration provides no conditions.
+  docs-high-level-description:
+    status: done
+    comment: README, introduction and "What it does".
+  docs-installation-instructions:
+    status: done
+    comment: README, "Installation" and "Setup".
+  docs-removal-instructions:
+    status: done
+    comment: README, "Removal".
+  docs-triggers:
+    status: exempt
+    comment: The integration provides no triggers; the delivered event is documented under docs-actions.
+  entity-event-setup:
+    status: done
+    comment: Entities subscribe in async_added_to_hass and unsubscribe through async_on_remove (entity.py, event.py).
+  entity-unique-id:
+    status: done
+    comment: "<entry id>_<key> for all nine entities (entity.py)."
+  has-entity-name:
+    status: done
+  runtime-data:
+    status: done
+    comment: The running center is entry.runtime_data.
+  test-before-configure:
+    status: exempt
+    comment: >-
+      There is no connection to test. The flow only offers Companion App devices
+      whose notify action exists and aborts when there is none.
+  test-before-setup:
+    status: done
+    comment: >-
+      A store that cannot be read or has an unexpected format raises
+      ConfigEntryNotReady with the reason (StoreNotReadableError, also for a
+      damaged history entry, a version 2 store without its salt and a message
+      without a matching id); Home Assistant retries. A store that cannot be
+      written turns "Ready" off with a repair issue and heals itself every 60 s.
+      tests/test_robustness.py, tests/test_store.py.
+  unique-config-entry:
+    status: done
+    comment: single_config_entry in the manifest; covered by tests/test_config_flow.py.
+
+  # Silver
+  action-exceptions:
+    status: done
+    comment: >-
+      Rejections raise ServiceValidationError with a translated message
+      (services.py); wrong fields are voluptuous schema errors; discard, snooze
+      and forward raise Unauthorized through Home Assistant's verify_domain_control.
+  config-entry-unloading:
+    status: done
+    comment: async_unload_entry stops timers, the alarm light and the page; tests/test_init.py.
+  docs-configuration-parameters:
+    status: done
+    comment: >-
+      README, "Settings" (all tabs, including the hint not to choose an alarm
+      lamp that triggers a message). The settings live on the integration's
+      page, not in an options flow.
+  docs-installation-parameters:
+    status: done
+    comment: README, "Setup" (the only parameter is the list of recipients).
+  entity-unavailable:
+    status: exempt
+    comment: >-
+      The entities describe the center itself, which is not a device that can be
+      away. A fault shows as "Ready" off with a reason.
+  integration-owner: done
+  log-when-unavailable:
+    status: done
+    comment: >-
+      An unwritable working store and an unwritable history store are each
+      logged once and once more when they work again ("... not writable",
+      "... writable again", center.py); an unreachable recipient becomes a repair
+      issue instead of repeated log lines; a refused light command is one
+      warning, and the alarm loop ends instead of warning at every step. Log
+      lines carry error classes and entity ids, never message content.
+  parallel-updates:
+    status: done
+    comment: PARALLEL_UPDATES = 0 in all four platforms; nothing talks to a device.
+  reauthentication-flow:
+    status: exempt
+    comment: No credentials are stored.
+  test-coverage:
+    status: done
+    comment: 355 tests, 97 % over all modules (measured 2026-10-02).
+
+  # Gold
+  devices:
+    status: done
+    comment: One service device "Message Center" per config entry.
+  diagnostics:
+    status: done
+    comment: diagnostics.py, without texts, notes, extra push data and user ids; tests/test_diagnostics_and_blueprint.py.
+  discovery:
+    status: exempt
+    comment: Nothing to discover.
+  discovery-update-info:
+    status: exempt
+    comment: Nothing to discover.
+  docs-data-update:
+    status: done
+    comment: README, "What it does" (nothing is polled; everything changes on events).
+  docs-examples:
+    status: done
+    comment: README, "Examples".
+  docs-known-limitations:
+    status: done
+    comment: >-
+      README, "Limits": what the Companion App does not report, delivery before
+      the store outside a call, shutdown, pending history, depth 1, the update
+      from 0.10.5 and the way back, the search, lights, capacity.
+  docs-supported-devices:
+    status: exempt
+    comment: No physical devices; recipients are notify actions of the Mobile App integration.
+  docs-supported-functions:
+    status: done
+    comment: >-
+      README, "Entities", "Events", "Buttons on the push" (order on an alarm,
+      context, transition of old ids), "Scripts" (depth 1).
+  docs-troubleshooting:
+    status: done
+    comment: >-
+      README, "Troubleshooting" and "Dependencies and reduced operation";
+      German maintenance guide with the log lines and their meaning.
+  docs-use-cases:
+    status: done
+    comment: README, "What it does".
+  dynamic-devices:
+    status: exempt
+    comment: One device per config entry, created at setup.
+  entity-category:
+    status: done
+    comment: Ready, Active rules and Last delivery are diagnostic; Light pulse is configuration.
+  entity-device-class:
+    status: done
+    comment: Last delivery is a timestamp. No device class fits the other entities.
+  entity-disabled-by-default:
+    status: exempt
+    comment: >-
+      All nine entities are enabled, because they are the
+      minimum operation without the page. None of them changes unless a
+      message arrives or a rule entity changes its state.
+  entity-translations:
+    status: done
+    comment: Translation keys for all entities, English and German.
+  exception-translations:
+    status: done
+    comment: >-
+      All action errors of the center use translation_domain and
+      translation_key (not_ready, invalid_field, priority_not_allowed,
+      store_full, not_authorized, not_found, store_not_readable); Unauthorized
+      and schema errors are Home Assistant's own.
+  icon-translations:
+    status: done
+    comment: icons.json with icons for all entities and actions.
+  reconfiguration-flow:
+    status: done
+    comment: async_step_reconfigure changes the recipients; covered by tests/test_config_flow.py.
+  repair-issues:
+    status: done
+    comment: >-
+      Seven repair issues with cause and remedy (working store, history store,
+      full store, unclear messages, rule entity, rule maximum, recipient), each
+      with title and description in both languages (checked by
+      tests/test_repository_files.py). None is fixable by a flow.
+  stale-devices:
+    status: exempt
+    comment: One device per config entry; it is removed with the entry.
+
+  # Platinum
+  async-dependency:
+    status: exempt
+    comment: No external requirements.
+  inject-websession:
+    status: exempt
+    comment: No web sessions.
+  strict-typing:
+    status: todo
+    comment: The code is annotated, but no type checker runs in CI.

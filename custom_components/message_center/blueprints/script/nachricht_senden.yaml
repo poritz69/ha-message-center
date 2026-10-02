@@ -1,0 +1,123 @@
+blueprint:
+  name: "Message Center: Nachricht senden (mit Rückfall)"
+  description: >-
+    Sendet Titel und Text an das Message Center. Ist es nicht bereit, lehnt es
+    ab oder fehlt es, erscheint die Nachricht als Benachrichtigung in Home
+    Assistant und geht roh an das Ersatzziel, falls eines gewählt ist (ohne
+    Zustellregeln, nur an dieses eine Handy). Auf das Handy wird dabei nicht
+    gewartet. Ergebnis des Skripts: result = accepted oder fallback.
+  domain: script
+  author: poritz69
+  homeassistant:
+    min_version: 2026.9.0
+  input:
+    ready_entity:
+      name: Entität „Bereit“ des Message Center
+      description: Der Binärsensor „Bereit“ am Gerät Message Center.
+      selector:
+        entity:
+          filter:
+            integration: message_center
+            domain: binary_sensor
+    fallback_target:
+      name: Ersatzziel (optional)
+      description: >-
+        Name der Notify-Aktion eines Handys mit Companion-App, zum Beispiel
+        mobile_app_handy. Nur dorthin, roh, ohne Zustellregeln. Leer = keins.
+      default: ""
+      selector:
+        text:
+fields:
+  title:
+    name: Titel
+    required: true
+    selector:
+      text:
+  message:
+    name: Text
+    required: true
+    selector:
+      text:
+        multiline: true
+  data:
+    name: Zusatzdaten
+    description: Beliebige Zusatzdaten für das Handy, wie bei notify.
+    required: false
+    selector:
+      object:
+mode: parallel
+# every fallback starts a second run of this script for the raw push
+max: 20
+variables:
+  ready_entity: !input ready_entity
+  fallback_target: !input fallback_target
+sequence:
+  # Second run, started further down with script.turn_on, which does not wait:
+  # it only does the raw push. So the sender never waits for a phone, and a
+  # missing or failing phone cannot turn the fallback into an error.
+  - if:
+      - condition: template
+        value_template: "{{ raw_push | default(false) }}"
+    then:
+      - action: "notify.{{ fallback_target }}"
+        continue_on_error: true
+        data:
+          title: "{{ title }}"
+          message: "{{ message }}"
+      - stop: "Roher Versand"
+
+  # Normal way, only while the center says it is ready. Without the
+  # integration the entity is not "on" and the action is not called at all
+  # (a missing action would end the script: continue_on_error does not cover it).
+  # "sent" and "result" stay inside this block; variables set in a block do
+  # not reach the top level.
+  - if:
+      - condition: template
+        value_template: "{{ is_state(ready_entity, 'on') }}"
+    then:
+      - action: message_center.send
+        continue_on_error: true
+        data:
+          title: "{{ title }}"
+          message: "{{ message }}"
+          data: "{{ data | default({}) }}"
+        response_variable: sent
+      - if:
+          - condition: template
+            value_template: "{{ sent is defined and sent.result | default('') == 'accepted' }}"
+        then:
+          - variables:
+              result:
+                result: accepted
+                reason: ""
+          - stop: "Angenommen"
+            response_variable: result
+
+  # Fallback: the center is not ready, rejected the message or did not answer.
+  - variables:
+      reason: >-
+        {{ 'Message Center hat abgelehnt oder nicht geantwortet' if is_state(ready_entity, 'on') else 'Message Center nicht bereit' }}
+  - action: persistent_notification.create
+    data:
+      title: "{{ title }}"
+      message: "{{ message }}\n\nRückfall des Message Center: {{ reason }}."
+      notification_id: "message_center_fallback_{{ title | slugify }}"
+  - if:
+      - condition: template
+        value_template: "{{ fallback_target is match('^mobile_app_') }}"
+    then:
+      - action: script.turn_on
+        continue_on_error: true
+        target:
+          entity_id: "{{ this.entity_id }}"
+        data:
+          variables:
+            raw_push: true
+            title: "{{ title }}"
+            message: "{{ message }}"
+  - variables:
+      result:
+        result: fallback
+        reason: "{{ reason }}"
+  - stop: "Rückfall"
+    response_variable: result

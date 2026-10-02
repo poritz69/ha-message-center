@@ -1,0 +1,6 @@
+# Test environment: mini Home Assistant in memory (pins homeassistant and pytest)
+pytest-homeassistant-custom-component==0.13.367
+# Linter and formatter
+ruff==0.16.9
+# The frontend package the HA version above requires (needed to set up the sidebar page in tests)
+home-assistant-frontend==20260826.7

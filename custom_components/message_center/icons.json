@@ -1,0 +1,65 @@
+{
+  "entity": {
+    "binary_sensor": {
+      "ready": {
+        "default": "mdi:check-circle-outline",
+        "state": {
+          "off": "mdi:alert-circle-outline"
+        }
+      }
+    },
+    "event": {
+      "delivered": {
+        "default": "mdi:send-check-outline"
+      }
+    },
+    "sensor": {
+      "open": {
+        "default": "mdi:inbox"
+      },
+      "disturbed": {
+        "default": "mdi:alert-outline"
+      },
+      "new": {
+        "default": "mdi:message-star-outline"
+      },
+      "active_rules": {
+        "default": "mdi:weather-night"
+      },
+      "last_delivery": {
+        "default": "mdi:check-all"
+      }
+    },
+    "switch": {
+      "light_pulse": {
+        "default": "mdi:lightbulb-on-outline",
+        "state": {
+          "off": "mdi:lightbulb-off-outline"
+        }
+      },
+      "alarm": {
+        "default": "mdi:alarm-light-outline",
+        "state": {
+          "on": "mdi:alarm-light"
+        }
+      }
+    }
+  },
+  "services": {
+    "send": {
+      "service": "mdi:send"
+    },
+    "discard": {
+      "service": "mdi:delete-outline"
+    },
+    "snooze": {
+      "service": "mdi:alarm-snooze"
+    },
+    "forward": {
+      "service": "mdi:robot-outline"
+    },
+    "list": {
+      "service": "mdi:format-list-bulleted"
+    }
+  }
+}

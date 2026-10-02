@@ -1,0 +1,22 @@
+/* Page around the preview: Home Assistant's colours (dark and light) and the frames the page sits in.
+   Dark is the default; preview.ts sets data-theme="light" for ?theme=light. */
+:root, :root[data-theme="dark"] { --primary-color:#03a9f4; --primary-background-color:#111; --card-background-color:#1c1c1c;
+  --secondary-background-color:#282828; --primary-text-color:#e1e1e1; --secondary-text-color:#9b9b9b;
+  --divider-color:rgba(225,225,225,.12); --warning-color:#ffa600; --error-color:#db4437; --success-color:#43a047;
+  --app-header-background-color:#1c1c1c; --app-header-text-color:#e1e1e1; --page:#0a0a0a; }
+:root[data-theme="light"] { --primary-color:#03a9f4; --primary-background-color:#fafafa; --card-background-color:#fff;
+  --secondary-background-color:#f0f0f0; --primary-text-color:#212121; --secondary-text-color:#727272;
+  --divider-color:rgba(0,0,0,.12); --warning-color:#ffa600; --error-color:#db4437; --success-color:#43a047;
+  --app-header-background-color:#03a9f4; --app-header-text-color:#fff; --page:#e8e8e8; }
+html { background:var(--page); }
+body { margin:0; padding:0 16px 64px; background:var(--page); color:var(--primary-text-color);
+  font-family:Roboto, -apple-system, "Segoe UI", sans-serif; font-size:14px; line-height:1.4; }
+h1.vtitle { font-size:20px; font-weight:500; margin:14px 0 2px; }
+p.vintro { color:var(--secondary-text-color); margin:0 0 6px; max-width:900px; }
+.v { margin:26px 0; }
+.v-label { font-size:14px; color:var(--secondary-text-color); margin-bottom:8px; }
+.v-label b { display:inline-block; min-width:28px; text-align:center; padding:1px 8px; margin-right:6px; border-radius:10px;
+  background:var(--primary-color); color:#fff; font-weight:600; }
+.frame { max-width:1100px; border:1px solid var(--divider-color); border-radius:12px; overflow:hidden;
+  background:var(--primary-background-color); margin-bottom:10px; }
+.frame.phone { max-width:380px; }
