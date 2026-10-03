@@ -17,6 +17,6 @@ p.vintro { color:var(--secondary-text-color); margin:0 0 6px; max-width:900px; }
 .v-label { font-size:14px; color:var(--secondary-text-color); margin-bottom:8px; }
 .v-label b { display:inline-block; min-width:28px; text-align:center; padding:1px 8px; margin-right:6px; border-radius:10px;
   background:var(--primary-color); color:#fff; font-weight:600; }
-.frame { max-width:1100px; border:1px solid var(--divider-color); border-radius:12px; overflow:hidden;
+.frame { position:relative; max-width:1100px; border:1px solid var(--divider-color); border-radius:12px; overflow:hidden;
   background:var(--primary-background-color); margin-bottom:10px; }
 .frame.phone { max-width:380px; }

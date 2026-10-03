@@ -11,6 +11,8 @@ import type {
 import { logoMark } from "./brand";
 import "./editor";
 import "./flow";
+import "./kind-editor";
+import { conditionLabel, forOrigin, type KindSource } from "./kind-logic";
 import { icon } from "./icons";
 import type { Field, FormData } from "./editor";
 
@@ -39,6 +41,8 @@ export class MessageCenterPanel extends LitElement {
   @state() private _config?: Config;
   @state() private _error = "";
   @state() private _editor?: Editor;
+  /** How the dialog for a message kind was opened; undefined while it is closed. */
+  @state() private _kindSource?: KindSource;
   @state() private _filterGroup = "";
   @state() private _filterKind = "";
   @state() private _search = "";
@@ -253,6 +257,9 @@ export class MessageCenterPanel extends LitElement {
     .empty { padding: 16px; color: var(--secondary-text-color); }
     .intro { color: var(--secondary-text-color); font-size: 14px; line-height: 1.4; margin: 0 0 12px; }
     .row[draggable="true"] { cursor: grab; }
+    /* an orphaned kind: its automation is gone; greyed out, still deletable */
+    .row.orphan .body, .row.orphan .grip { opacity: .55; }
+    .chip.orphan { background: transparent; border: 1px dashed currentColor; color: var(--secondary-text-color); }
     .row.dragging { opacity: .5; }
     ha-card.drop-target { outline: 2px dashed var(--primary-color); outline-offset: -2px; }
     .level { display: flex; gap: 12px; align-items: flex-start; padding: 12px 16px; border-top: 1px solid var(--divider-color); }
@@ -362,6 +369,10 @@ export class MessageCenterPanel extends LitElement {
         .fields=${this._editor.fields} .labels=${this._editor.labels} .helpers=${this._editor.helpers} .data=${this._editor.data}
         .onSave=${this._editor.onSave} .onChange=${this._editor.onChange}
         @editor-closed=${() => { this._editor = undefined; if (this._scan && this._tab === "kinds") void this._runScan(); }}></message-center-editor>` : nothing}
+      ${this._kindSource ? html`<message-center-kind-editor .hass=${this.hass} .t=${t} .config=${this._config}
+        .unknown=${this._overview?.unknown ?? []} .source=${this._kindSource}
+        @edit-kind=${(e: CustomEvent<{ kind_id: string }>) => this._editKindById(e.detail.kind_id)}
+        @editor-closed=${() => { this._kindSource = undefined; if (this._scan && this._tab === "kinds") void this._runScan(); }}></message-center-kind-editor>` : nothing}
     `;
   }
 
@@ -472,7 +483,7 @@ export class MessageCenterPanel extends LitElement {
       </div>
       <div class="actions">
         <ha-button appearance="plain" @click=${() => this._dismiss(u)}>${t("dismiss")}</ha-button>
-        <ha-button @click=${() => this._openKindEditor(undefined, u)}>${t("classify")}</ha-button>
+        <ha-button @click=${() => this._openKindEditor({ from: "new", item: u })}>${t("classify")}</ha-button>
       </div>
     </div>`;
   }
@@ -627,7 +638,7 @@ export class MessageCenterPanel extends LitElement {
     return html`
       ${this._intro("intro_kinds")}
       <div class="toolbar">
-        <ha-button @click=${() => this._openKindEditor()}>${t("add_kind")}</ha-button>
+        <ha-button @click=${() => this._openKindEditor({ from: "blank" })}>${t("add_kind")}</ha-button>
         <ha-button appearance="outlined" @click=${() => this._openGroupEditor()}>${t("add_group")}</ha-button>
         <ha-button appearance="outlined" .disabled=${this._scanBusy} @click=${this._runScan}>${t("scan_button")}</ha-button>
       </div>
@@ -644,7 +655,7 @@ export class MessageCenterPanel extends LitElement {
             <div class="meta">${this._nKinds(unassigned.length)}</div>
           </div>
           <div class="actions">
-            <ha-button appearance="plain" @click=${() => this._openKindEditor()}>${t("add_kind")}</ha-button>
+            <ha-button appearance="plain" @click=${() => this._openKindEditor({ from: "blank" })}>${t("add_kind")}</ha-button>
           </div>
         </div>
         ${unassigned.length === 0
@@ -733,12 +744,9 @@ export class MessageCenterPanel extends LitElement {
       </div>`)}`;
   }
 
-  /** Open the kind form prefilled from a found place: origin and title condition. */
+  /** Open the kind dialog for a found place: its origin and the suggested condition. */
   private _kindFromScan(i: ScanItem) {
-    this._openKindEditor(undefined, {
-      origin: i.origin ?? "unknown", origin_name: i.origin ? i.name : null, labels: [],
-      title: i.suggestion?.value ?? "", count: 0, first_seen: "", last_seen: "",
-    }, undefined, i.suggestion?.mode ?? "exact");
+    this._openKindEditor({ from: "scan", item: i });
   }
 
   private _renderGroup(g: Group, kinds: Kind[]) {
@@ -756,7 +764,7 @@ export class MessageCenterPanel extends LitElement {
             ${g.expires_after ? html` · ${t("expires_after").split(" ")[0]} ${g.expires_after} min` : nothing}</div>
         </div>
         <div class="actions">
-          <ha-button appearance="plain" @click=${() => this._openKindEditor(undefined, undefined, g.id)}>${t("add_kind")}</ha-button>
+          <ha-button appearance="plain" @click=${() => this._openKindEditor({ from: "blank", group: g.id })}>${t("add_kind")}</ha-button>
           <ha-button appearance="plain" @click=${() => this._openGroupEditor(g)}>${t("edit")}</ha-button>
           <ha-button appearance="plain" @click=${() => this._delete(g.id)}>${t("delete")}</ha-button>
         </div>
@@ -767,100 +775,48 @@ export class MessageCenterPanel extends LitElement {
 
   private _renderKind(k: Kind) {
     const t = this._t;
-    const origin = k.origin ? (this._config?.origins.find((o) => o.entity_id === k.origin)?.name ?? k.origin) : t("from_any");
-    return html`<div class="row ${this._dragKind === k.id ? "dragging" : ""}" draggable="true"
+    const origin = k.origin ? this._originName(k.origin) : t("from_any");
+    return html`<div class="row ${this._dragKind === k.id ? "dragging" : ""} ${k.orphan ? "orphan" : ""}" draggable="true"
       @dragstart=${(e: DragEvent) => { this._dragKind = k.id; e.dataTransfer?.setData("text/plain", k.id); if (e.dataTransfer) e.dataTransfer.effectAllowed = "move"; }}
       @dragend=${() => { this._dragKind = ""; this._dropTarget = ""; }}>
       <span class="grip" title=${t("drag_hint")}>${icon("grip")}</span>
       <div class="body">
         <div class="title"><span class="chip p${k.priority}">${k.priority}</span>${k.name}${k.active ? nothing : html` <span class="chip">${t("rule_inactive")}</span>`}
+          ${k.orphan ? html` <span class="chip orphan" title=${forOrigin(t, "orphan_hint", k.origin)}>${t("orphan")}</span>` : nothing}
           ${k.ties?.length ? html` <span class="chip state-waiting" title=${t("tie").replace("{names}", k.ties.join(", "))}>${t("tie").replace("{names}", k.ties.join(", "))}</span>` : nothing}</div>
-        <div class="meta">${origin} · ${t(k.title_mode)} ${t("q_open")}${k.title_value}${t("q_close")}
+        <div class="meta">${origin} · ${conditionLabel(t, k.title_mode, k.title_value, k.origin)}
           ${k.no_hold ? html` · ${t("no_hold")}` : nothing}
           ${k.spacing ? html` · ${t("spacing").split(" ")[0]} ${k.spacing} min` : nothing}
           ${k.expires_after ? html` · ${t("expires_after").split(" ")[0]} ${k.expires_after} min` : nothing}</div>
+        ${k.orphan ? html`<div class="meta">${forOrigin(t, "orphan_hint", k.origin)}</div>` : nothing}
       </div>
       <div class="actions">
-        <ha-button appearance="plain" @click=${() => this._openKindEditor(k)}>${t("edit")}</ha-button>
+        <ha-button appearance="plain" @click=${() => this._openKindEditor({ from: "edit", kind: k })}>${t("edit")}</ha-button>
         <ha-button appearance="plain" @click=${() => this._delete(k.id)}>${t("delete")}</ha-button>
       </div>
     </div>`;
   }
 
   /**
-   * Form for a kind. `unknown` prefills origin and title from "New, please
-   * classify"; `presetGroup` preselects a group. Next to the group dropdown
-   * there is a plain text field "new group": a name typed there creates the
-   * group first, with the kind's priority, spacing and expiry as its defaults.
+   * Open the dialog for a kind: new without a template ("blank", optionally
+   * in a group), from an entry of "new", from a place the search found, or
+   * to edit a kind (see kind-editor.ts).
    */
-  private _openKindEditor(kind?: Kind, unknown?: UnknownItem, presetGroup?: string, titleMode = "exact") {
-    const t = this._t;
-    const c = this._config;
-    const origins = [{ value: "", label: t("from_any") }, ...(c?.origins ?? []).map((o) => ({ value: o.entity_id, label: o.name ?? o.entity_id }))];
-    if (unknown && unknown.origin !== "unknown" && !origins.some((o) => o.value === unknown.origin)) {
-      origins.push({ value: unknown.origin, label: unknown.origin_name ?? unknown.origin });
-    }
-    const groups = [{ value: "", label: t("no_group") }, ...(c?.groups ?? []).map((g) => ({ value: g.id, label: g.name }))];
-    const fields: Field[] = [
-      { name: "name", required: true, selector: { text: {} } },
-      { name: "origin", selector: { select: { options: origins, mode: "dropdown" } } },
-      { name: "title_mode", required: true, selector: { select: { options: [
-        { value: "exact", label: t("exact") }, { value: "prefix", label: t("prefix") }, { value: "contains", label: t("contains") }], mode: "dropdown" } } },
-      { name: "title_value", required: true, selector: { text: {} } },
-      { name: "group_id", selector: { select: { options: groups, mode: "dropdown" } } },
-      { name: "new_group", selector: { text: {} } },
-      { name: "priority", required: true, selector: { select: { options: [
-        { value: "1", label: t("p1") }, { value: "2", label: t("p2") }, { value: "3", label: t("p3") }], mode: "dropdown" } } },
-      { name: "no_hold", selector: { boolean: {} } },
-      { name: "spacing", selector: { number: { min: 0, max: 10080, mode: "box", unit_of_measurement: "min" } } },
-      { name: "expires_after", selector: { number: { min: 0, max: 10080, mode: "box", unit_of_measurement: "min" } } },
-      { name: "light", selector: { select: { options: [
-        { value: "auto", label: t("light_auto") }, { value: "on", label: t("light_on") }, { value: "off", label: t("light_off") }], mode: "dropdown" } } },
-      { name: "active", selector: { boolean: {} } },
-    ];
-    const labels = Object.fromEntries(fields.map((f) => [f.name, t(f.name)]));
-    const helpers = { new_group: t("new_group_helper") };
-    // A new kind takes priority, spacing and expiry from its group's defaults.
-    const withDefaults = (d: FormData, groupId: unknown): FormData => {
-      const g = c?.groups.find((x) => x.id === groupId);
-      return g ? { ...d, priority: String(g.priority), spacing: g.spacing, expires_after: g.expires_after } : d;
-    };
-    const data: FormData = kind
-      ? { ...kind, origin: kind.origin ?? "", group_id: kind.group_id ?? "", new_group: "", priority: String(kind.priority),
-          light: kind.light === null ? "auto" : kind.light ? "on" : "off" }
-      : withDefaults({ name: unknown?.title ?? "", origin: unknown && unknown.origin !== "unknown" ? unknown.origin : "",
-          title_mode: titleMode, title_value: unknown?.title ?? "", group_id: presetGroup ?? "", new_group: "", priority: "1",
-          no_hold: false, spacing: 0, expires_after: 0, light: "auto", active: true }, presetGroup);
-    this._editor = {
-      heading: kind ? `${t("edit")}: ${kind.name}` : t("add_kind"),
-      fields, labels, helpers, data,
-      onChange: kind ? undefined : (next, prev) => (next.group_id !== prev.group_id ? withDefaults(next, next.group_id) : next),
-      onSave: async (d) => {
-        if (!String(d.name ?? "").trim() || !String(d.title_value ?? "").trim()) throw new Error(t("required_missing"));
-        // A name in "new group" wins over the dropdown. An existing name is reused.
-        let groupId = (d.group_id as string) || null;
-        const newName = String(d.new_group ?? "").trim();
-        if (newName) {
-          const existing = (c?.groups ?? []).find((g) => g.name.toLowerCase() === newName.toLowerCase());
-          if (existing) {
-            groupId = existing.id;
-          } else {
-            const created = await saveEntry(this.hass, "group", {
-              name: newName, icon: null, priority: Number(d.priority), spacing: Number(d.spacing ?? 0), expires_after: Number(d.expires_after ?? 0),
-            });
-            groupId = created.subentry_id;
-          }
-          d.group_id = groupId; // a retry after a failure below must not create the group twice
-          d.new_group = "";
-        }
-        await saveEntry(this.hass, "kind", {
-          name: d.name, origin: d.origin || null, title_mode: d.title_mode, title_value: d.title_value,
-          group_id: groupId, priority: Number(d.priority), no_hold: !!d.no_hold,
-          spacing: Number(d.spacing ?? 0), expires_after: Number(d.expires_after ?? 0),
-          light: d.light === "auto" ? null : d.light === "on", active: d.active !== false,
-        }, kind?.id);
-      },
-    };
+  private _openKindEditor(source: KindSource) {
+    this._kindSource = source;
+  }
+
+  /** "Edit the existing one" after a refused double condition: the dialog switches to that kind. */
+  private _editKindById(kindId: string) {
+    const kind = this._config?.kinds.find((k) => k.id === kindId);
+    if (kind) this._kindSource = { from: "edit", kind };
+  }
+
+  /** Name of an origin: as the center knows it, else as Home Assistant shows it, else its id. */
+  private _originName(id: string): string {
+    const known = this._config?.origins.find((o) => o.entity_id === id)?.name;
+    const shown = this.hass?.states?.[id]?.attributes?.friendly_name;
+    return known ?? (typeof shown === "string" && shown ? shown : id);
   }
 
   /** A kind dropped on a group card (or "-" for unassigned) gets that group; nothing else changes. */

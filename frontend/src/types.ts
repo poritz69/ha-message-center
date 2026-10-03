@@ -81,6 +81,8 @@ export interface UnknownItem {
   count: number;
   first_seen: string;
   last_seen: string;
+  /** The automation sends several different messages (its configuration, else the titles that arrived). */
+  multiple?: boolean;
 }
 
 export interface Overview {
@@ -106,11 +108,15 @@ export interface Messages {
   recent: MessageEntry[];
 }
 
+/** How the title condition of a kind compares; "any" takes every title of its origin. */
+export type TitleMode = "exact" | "prefix" | "contains" | "any";
+
 export interface Kind {
   id: string;
   name: string;
   origin: string | null;
-  title_mode: "exact" | "prefix" | "contains";
+  title_mode: TitleMode;
+  /** Empty for "any". */
   title_value: string;
   group_id: string | null;
   priority: number;
@@ -121,6 +127,8 @@ export interface Kind {
   active: boolean;
   /** Names of active kinds a title could match equally well: the older one wins. */
   ties: string[];
+  /** Its automation or script exists no more: it affects nothing and can be deleted. */
+  orphan?: boolean;
 }
 
 export interface Group {
@@ -218,11 +226,16 @@ export interface ScanItem {
   title: string | null;
   title_template: boolean;
   first_line: string | null;
-  suggestion: { mode: "exact" | "prefix"; value: string } | null;
+  /** Condition for a kind: "any" for an automation that sends one message, else the title. */
+  suggestion: Suggestion | null;
+  /** The automation or script sends several different messages. */
+  multiple?: boolean;
   file: string | null;
   line: number | null;
   kind: string | null;
 }
+
+export type Suggestion = { mode: "exact" | "prefix" | "contains"; value: string } | { mode: "any"; value?: undefined };
 
 /** A line in a file of the configuration directory that mentions a notify action. */
 export interface ScanFile {
@@ -236,4 +249,49 @@ export interface ScanResult {
   found: ScanItem[];
   files: ScanFile[];
   counts: { automations: number; scripts: number; files: number; direct: number };
+}
+
+/** One message an automation or script sends, read from its configuration. */
+export interface OriginMessage {
+  /** The title as written; null for a call without one (it is called after the automation). */
+  title: string | null;
+  template: boolean;
+  /** The title as shown: computed parts as "…", the automation's name for a call without a title. */
+  display: string;
+}
+
+/** Which messages one origin sends (message_center/origin_messages). */
+export interface OriginMessages {
+  /** config: its calls to the center; seen: titles that arrived; direct: its calls past the center; none. */
+  source: "config" | "seen" | "direct" | "none";
+  messages: OriginMessage[];
+  /** Different titles that arrived from it, newest first. */
+  seen_titles: string[];
+  multiple: boolean;
+  /** False for an origin that is no automation or script: no "all messages of" for it. */
+  any_allowed: boolean;
+}
+
+/** A pair of origin and title a condition matches, with the other kind that would take it. */
+export interface MatchedPair {
+  origin: string;
+  origin_name: string | null;
+  title: string;
+  count?: number;
+  last_seen: string;
+  taken_by: { kind_id: string; name: string } | null;
+}
+
+/** What a condition matches in "new" and among the stored messages (message_center/kind_matches). */
+export interface KindMatches {
+  /** False while the condition is incomplete: it matches nothing. */
+  valid: boolean;
+  new: MatchedPair[];
+  new_count: number;
+  seen: MatchedPair[];
+  seen_count: number;
+  taken_count: number;
+  overlaps: { kind_id: string; name: string; winner: "this" | "other"; shared: number }[];
+  overlap_count: number;
+  probe: { matches: boolean; taken_by: { kind_id: string; name: string } | null } | null;
 }

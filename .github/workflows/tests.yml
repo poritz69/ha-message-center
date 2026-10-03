@@ -46,6 +46,9 @@ jobs:
       - name: Type check
         run: npm run check
         working-directory: frontend
+      - name: Page logic tests
+        run: npm test
+        working-directory: frontend
       - name: Build
         run: npm run build
         working-directory: frontend

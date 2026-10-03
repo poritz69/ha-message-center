@@ -1,1 +1,3 @@
 node_modules/
+# tests bundled by npm test
+.test-build/

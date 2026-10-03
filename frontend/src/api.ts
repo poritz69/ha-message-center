@@ -1,4 +1,6 @@
-import type { Config, HomeAssistant, MessageEntry, Messages, Options, Overview, ScanResult } from "./types";
+import type {
+  Config, HomeAssistant, KindMatches, MessageEntry, Messages, OriginMessages, Options, Overview, ScanResult, TitleMode,
+} from "./types";
 
 const D = "message_center";
 
@@ -50,6 +52,20 @@ export const alarmOff = (hass: HomeAssistant) =>
 
 export const scanHouse = (hass: HomeAssistant) =>
   hass.callWS<ScanResult>({ type: `${D}/scan` });
+
+/** Which messages an automation or script sends: one, or several to tell apart. */
+export const fetchOriginMessages = (hass: HomeAssistant, origin: string) =>
+  hass.callWS<OriginMessages>({ type: `${D}/origin_messages`, origin });
+
+/** What a condition matches; `kind_id` leaves the kind being edited out, `probe` asks about one pair. */
+export const fetchKindMatches = (
+  hass: HomeAssistant,
+  condition: { origin: string | null; title_mode: TitleMode; title_value: string },
+  kindId?: string,
+  probe?: { origin: string; title: string } | null
+) => hass.callWS<KindMatches>({
+  type: `${D}/kind_matches`, ...condition, ...(kindId ? { kind_id: kindId } : {}), ...(probe ? { probe } : {}),
+});
 
 export const subscribe = (hass: HomeAssistant, callback: () => void) =>
   hass.connection.subscribeMessage(() => callback(), { type: `${D}/subscribe` });

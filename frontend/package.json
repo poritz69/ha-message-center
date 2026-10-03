@@ -8,7 +8,8 @@
   "scripts": {
     "build": "esbuild src/panel.ts --bundle --format=esm --target=es2022 --minify --legal-comments=none --outfile=../custom_components/message_center/frontend/message-center-panel.js && esbuild src/sidebar-icon.ts --bundle --format=esm --target=es2022 --minify --legal-comments=none --outfile=../custom_components/message_center/frontend/message-center-icons.js",
     "check": "tsc --noEmit",
-    "preview": "esbuild src/preview.ts --bundle --format=esm --target=es2022 --outfile=preview/preview.js"
+    "preview": "esbuild src/preview.ts --bundle --format=esm --target=es2022 --outfile=preview/preview.js",
+    "test": "esbuild test/*.test.ts --bundle --platform=node --format=esm --target=node20 --outdir=.test-build --out-extension:.js=.mjs --log-level=warning && node --test .test-build/*.test.mjs"
   },
   "devDependencies": {
     "esbuild": "^0.25.0",
