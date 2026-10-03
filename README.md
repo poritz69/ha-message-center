@@ -85,7 +85,7 @@ Message Center polls nothing. Its entities and its page change the moment someth
 | Term | Meaning |
 |---|---|
 | **Origin** | The automation a message comes from. Message Center reads it from the call itself; the sender does not state it. A script counts as the automation that started it. A call from the developer tools, the API or another integration has the origin "unknown". |
-| **Message kind** | An entry that recognises one sort of message by origin and title ("exact", "begins with", "contains") and says how to treat it: priority, group, spacing, expiry, light pulse, "do not hold". |
+| **Message kind** | An entry that recognises one sort of message by origin and title ("exact", "begins with", "contains", or "all messages of this automation") and says how to treat it: priority, group, spacing, expiry, light pulse, "do not hold". |
 | **Group** | A set of kinds for display and filtering, such as "Climate" or "Server". |
 | **Priority** | 1 notice (push), 2 important (push and light pulse), 3 alarm (push that breaks through "do not disturb", plus the alarm light). |
 | **Delivery rule** | While an entity is in a state, messages of a priority are passed, held or discarded. Held messages are delivered when the state ends, at the latest after the rule's maximum duration. |
@@ -132,7 +132,7 @@ Everything is configured in the UI. There is no YAML and nothing needs a restart
 
 - Put the varying part (a room, a device) into the **title** if every room should be its own message: "Humidity: office", "Humidity: kitchen". One kind "begins with *Humidity*" then covers all rooms.
 - Put it into the **text** if there should be only one message that later ones replace.
-- Without a title, the message is called "Mitteilung".
+- Without a title, the message is called after its automation (or script). Only when the origin is unknown is it called "Mitteilung". The name is then its identity: renaming the automation makes later messages new ones (a kind "all messages of this automation" still takes them).
 
 If a sender needs to know whether the message was accepted, or wants a fallback when Message Center is down, use the script blueprint that ships with the integration (see [Blueprint](#blueprint-send-with-fallback)).
 
@@ -206,7 +206,7 @@ All settings live on the page in the sidebar. This is a deliberate choice: the p
 
 | Tab | What you set |
 |---|---|
-| **Message kinds** | Groups (name, icon, defaults) and kinds: name, origin (one automation or any), title condition, group, priority, "do not hold" (ignore delivery rules), spacing in minutes (minimum time between two push cycles of the same message), expiry in minutes (an undelivered message is discarded after that), light pulse (by priority / always / never), active. If several kinds match, the most specific one wins: a named origin before "any", "exact" before "begins with" before "contains", then the longer condition. |
+| **Message kinds** | Groups (name, icon, defaults) and kinds: name, origin (one automation or any), title condition, group, priority, "do not hold" (ignore delivery rules), spacing in minutes (minimum time between two push cycles of the same message), expiry in minutes (an undelivered message is discarded after that), light pulse (by priority / always / never), active. "All messages of this automation" needs a named origin. If several kinds match, the most specific one wins: a named origin before "any", "exact" before "begins with" before "contains" before "all messages of this automation", then the longer condition. Two kinds cannot have the same condition. |
 | **Delivery rules** | Name, entity, state, effect per priority (pass / hold / discard), maximum duration (1–168 h, default 12). If the entity is unavailable, the rule counts as active and a repair issue appears. |
 | **Recipients** | Which Companion App devices receive the messages (at least one), whether they are reachable and their last error. |
 | **Settings → priority → effect** | Per priority: an optional script (see [Scripts](#scripts-own-effect-and-forwarding)) and a **Test** button that sends a test push without any record. |
@@ -230,7 +230,7 @@ Only what is listed here is meant to be used by automations and other integratio
 | Field | |
 |---|---|
 | `message` | required, 1–2000 characters |
-| `title` | optional, 1–100 characters; default "Mitteilung" |
+| `title` | optional, 1–100 characters; default: the name of its origin, as the entity settings show it (a script started by an automation counts as that automation), cut to 100 characters; "Mitteilung" when the origin is unknown |
 | `data` | optional; passed on to the Companion App. Must be storable as JSON (no numbers beyond 64 bit, no cyclic structures, nesting of 250 levels at most); what Home Assistant can convert (set, tuple, datetime) is fine. A text with half a character pair (a cut emoji) is refused the same way |
 | `target` | accepted and ignored: Message Center chooses the recipients |
 
@@ -398,7 +398,7 @@ Titles and texts of messages are treated as sensitive.
 |---|---|
 | A message did not arrive | *Open* tab: is it waiting, and why (rule, spacing, snoozed)? *History*: was it discarded or did it expire? *Recipients*: last error of the phone. |
 | A message arrived although night mode is on | Its kind has "do not hold", or it is priority 3, or the rule exceeded its maximum duration (repair issue). |
-| A message shows up under "New" again | Its title changed, so the kind's title condition no longer matches. |
+| A message shows up under "New" again | Its title changed, so the kind's title condition no longer matches, or the automation of a message without a title was renamed. |
 | No light pulse | The lights must be on (unless marked "also when off"), the switch "Light pulse" must be on, and the kind must not say "never". The reason is noted under the message: `light_skipped` with "minimum spacing", "no lamp on" or "message from an own effect"; `light_failed` ("no right to the lamps") when the sender may not switch them. |
 | A script did not run | `script_failed`: the script is missing, failed or took longer than 30 seconds. `script_skipped`: the message came from an own effect of Message Center (depth 1), see [Scripts](#scripts-own-effect-and-forwarding). |
 | A retry does not happen although it is due | A delivery rule holds the priority: the reason says "held back: ‹rule› until …" and `next_try` is empty. It goes out at the rule's end, or now with *send now*. |

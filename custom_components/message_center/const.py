@@ -17,6 +17,11 @@ KEY_MAX_LENGTH: Final = 80
 NOTE_MAX_LENGTH: Final = 500
 MINUTES_MAX: Final = 10080
 DEFAULT_CATEGORY: Final = "default"
+# title of a message without one whose origin is not known; with a known
+# origin the message is called after its automation or script
+DEFAULT_TITLE: Final = "Mitteilung"
+# stands for the computed parts of a title read from a configuration
+PLACEHOLDER: Final = "…"
 
 # Store limits and timing
 MAX_OPEN_MESSAGES: Final = 200
@@ -80,6 +85,10 @@ CONF_ALLOW_ALARM: Final = "allow_alarm"
 SUBENTRY_KIND: Final = "kind"
 SUBENTRY_GROUP: Final = "group"
 MAX_UNKNOWN: Final = 200
+# titles of one origin the page is shown when a kind is set up
+MAX_SEEN_TITLES: Final = 10
+# entries per list when the page asks what a condition matches
+MAX_MATCHES_LISTED: Final = 20
 # contexts of the center's own effects kept to recognise what they send back
 MAX_EFFECT_CONTEXTS: Final = 1000
 UNKNOWN_KIND_NAME: Final = "unknown"

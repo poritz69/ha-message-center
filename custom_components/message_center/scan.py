@@ -21,6 +21,14 @@ as Home Assistant has loaded them: templates are not rendered, ``!secret``
 and blueprint inputs are already filled in.
 Of a line in a file only the file, the line number and the action names it
 mentions are reported, never the line itself.
+
+The same reading tells the page which messages one automation or script
+sends (``origin_messages``): one, so that a kind for all of its messages
+fits, or several, so that the title has to tell them apart.
+
+A message without a title is called after its origin, by the name of the
+origin's state (an own name given in the entity settings wins over the
+alias); the search uses the same name.
 """
 
 from __future__ import annotations
@@ -33,8 +41,8 @@ from typing import Any
 
 from homeassistant.core import HomeAssistant
 
-from .const import DOMAIN, TITLE_MAX_LENGTH
-from .kinds import Kind, match_kind
+from .const import DOMAIN, PLACEHOLDER, TITLE_MAX_LENGTH
+from .kinds import Kind, match_kind, origin_allows_any
 
 STATUS_DIRECT = "direct"  # goes to a phone or service directly: to be changed
 STATUS_CENTER = "center"  # already goes through the message center
@@ -82,12 +90,26 @@ MAX_HITS = 300
 # a step found in an automation covers the text hits in the lines of its block
 COVER_LINES = 40
 MIN_PREFIX = 3
-# a first line longer than this is a sentence, not a headline to take as title
-MAX_HEADLINE = 60
+# where the steps of an automation and of a script are
+STEP_KEYS = {"automation": ("actions", "action"), "script": ("sequence",)}
+_STATEMENTS = re.compile(r"\{%.*%\}", re.DOTALL)
+_EXPRESSIONS = re.compile(r"\{\{.*?\}\}", re.DOTALL)
+_PLACEHOLDERS = re.compile(r"…(?:\s*…)+")
 
 
 def _is_template(text: str) -> bool:
     return "{{" in text or "{%" in text
+
+
+def display_title(title: str) -> str:
+    """Show a title with its computed parts as a placeholder.
+
+    Everything from the first statement (``{% … %}``) to the last is one
+    computed part, each expression (``{{ … }}``) another; placeholders next
+    to each other become one.
+    """
+    text = _EXPRESSIONS.sub(PLACEHOLDER, _STATEMENTS.sub(PLACEHOLDER, title))
+    return _PLACEHOLDERS.sub(PLACEHOLDER, text).strip() or PLACEHOLDER
 
 
 def _status(names: list[str]) -> str:
@@ -152,26 +174,73 @@ def _first_line(message: str | None) -> str | None:
     return None
 
 
-def suggest_title(title: str | None, first_line: str | None) -> dict[str, str] | None:
-    """Suggest a title condition for a message kind.
+def suggest_title(title: str | None) -> dict[str, str] | None:
+    """Suggest a title condition for a message kind from the title of a call.
 
     A fixed title is taken as it is. Of a computed one the fixed beginning is
-    used, if there is one. Without a title the first line of the text stands
-    in, when it is short enough to be a headline: it is what the title should
-    become when the call is changed. A long first line is a sentence; then
-    the title is left to the user.
+    used, if there is one. Without a title there is nothing to suggest here:
+    such a message is called after its automation, see ``scan_suggestion``.
+    The first line of the text is no title.
     """
-    source = title or first_line
-    if not source:
+    if not title:
         return None
-    if not _is_template(source):
-        if not title and len(source) > MAX_HEADLINE:
-            return None
-        return {"mode": "exact", "value": source[:TITLE_MAX_LENGTH]}
-    prefix = re.split(r"\{\{|\{%", source, maxsplit=1)[0].strip()
+    if not _is_template(title):
+        return {"mode": "exact", "value": title[:TITLE_MAX_LENGTH]}
+    prefix = re.split(r"\{\{|\{%", title, maxsplit=1)[0].strip()
     if len(prefix) >= MIN_PREFIX:
         return {"mode": "prefix", "value": prefix[:TITLE_MAX_LENGTH]}
     return None
+
+
+def sent_messages(titles: list[str | None], name: str) -> list[dict[str, Any]]:
+    """Return the different messages calls with these titles send, in their order.
+
+    ``titles`` are the whole titles as written, None for a call without one.
+    A fixed title counts once (case aside); a computed one is one message,
+    however many titles it makes, and counts once per template text, read
+    as a whole. A call without a title is called after its automation or
+    script (``name``), so it is the same message as a call with that title.
+    ``display`` shows a computed title with its computed parts as a
+    placeholder; ``title`` and ``display`` are cut to the length of a title.
+    """
+    untitled = name[:TITLE_MAX_LENGTH]
+    messages: dict[str, dict[str, Any]] = {}
+    for title in titles:
+        template = title is not None and _is_template(title)
+        shown = display_title(title) if title and template else (title or untitled)
+        messages.setdefault(
+            (title or untitled).casefold(),
+            {
+                "title": title[:TITLE_MAX_LENGTH] if title else None,
+                "template": template,
+                "display": shown[:TITLE_MAX_LENGTH],
+            },
+        )
+    return list(messages.values())
+
+
+def scan_suggestion(
+    item: dict[str, Any], origin: str | None, name: str, multiple: bool
+) -> dict[str, str] | None:
+    """Suggest the condition of a kind for one call found in an automation or script.
+
+    An automation that sends one message gets "all messages of this
+    automation" (``{"mode": "any"}``, the origin is the item's). One that
+    sends several keeps the title: as it is, its fixed beginning, or for a
+    call without a title the name of the automation, which becomes the
+    title. A script has no origin of its own (whoever starts it is), so its
+    suggestion always follows the title. A notification in the Home
+    Assistant UI does not go through the center: its title only.
+    """
+    if item["status"] == STATUS_PERSISTENT:
+        return suggest_title(item["title"])
+    if origin is not None and not multiple:
+        return {"mode": "any"}
+    if item["title"] is None:
+        if origin is None:
+            return None
+        return {"mode": "exact", "value": name[:TITLE_MAX_LENGTH]}
+    return suggest_title(item["title"])
 
 
 def _location(step: Any, config_dir: str) -> tuple[str | None, int | None]:
@@ -187,17 +256,26 @@ def _location(step: Any, config_dir: str) -> tuple[str | None, int | None]:
     return file, line if isinstance(line, int) else None
 
 
+def _call_data(step: dict[str, Any], name: str) -> tuple[dict[str, Any], list[str]]:
+    """Return the data and the targets of a notifying step."""
+    if name == DEVICE_ACTION:
+        return step, []
+    raw = step.get("data") or step.get("data_template") or {}
+    data = raw if isinstance(raw, dict) else {}
+    target = step.get("target")
+    targets = _as_list(target.get("entity_id")) if isinstance(target, dict) else []
+    targets += _as_list(step.get("entity_id")) + _as_list(data.get("entity_id"))
+    return data, targets
+
+
+def call_title(step: dict[str, Any], name: str) -> str | None:
+    """Return the whole title of a notifying step as written, None without one."""
+    return _text(_call_data(step, name)[0].get("title"))
+
+
 def describe_call(step: dict[str, Any], name: str, config_dir: str) -> dict[str, Any]:
     """Turn one notifying step into an entry for the page."""
-    if name == DEVICE_ACTION:
-        data: dict[str, Any] = step
-        targets: list[str] = []
-    else:
-        raw = step.get("data") or step.get("data_template") or {}
-        data = raw if isinstance(raw, dict) else {}
-        target = step.get("target")
-        targets = _as_list(target.get("entity_id")) if isinstance(target, dict) else []
-        targets += _as_list(step.get("entity_id")) + _as_list(data.get("entity_id"))
+    data, targets = _call_data(step, name)
     title = _text(data.get("title"))
     first_line = _first_line(_text(data.get("message")))
     file, line = _location(step, config_dir)
@@ -208,7 +286,7 @@ def describe_call(step: dict[str, Any], name: str, config_dir: str) -> dict[str,
         "title": title[:TITLE_MAX_LENGTH] if title else None,
         "title_template": bool(title and _is_template(title)),
         "first_line": first_line[:TITLE_MAX_LENGTH] if first_line else None,
-        "suggestion": suggest_title(title, first_line),
+        "suggestion": suggest_title(title),
         "file": file,
         "line": line,
     }
@@ -219,6 +297,147 @@ def _entities(hass: HomeAssistant, domain: str) -> list[Any]:
     return list(getattr(component, "entities", []))
 
 
+def _entity_calls(entity: Any, domain: str) -> Iterator[tuple[dict[str, Any], str]]:
+    """Yield the notifying steps of a loaded automation or script."""
+    raw = getattr(entity, "raw_config", None)
+    if isinstance(raw, dict):
+        yield from find_calls([raw.get(key) for key in STEP_KEYS[domain]])
+
+
+def _entity_name(hass: HomeAssistant, entity: Any) -> str:
+    """Name of an automation or script as its messages carry it.
+
+    The name of its state, as the origin of a message is named: an own name
+    given in the entity settings wins over the alias.
+    """
+    state = hass.states.get(entity.entity_id)
+    if state is not None:
+        return state.name
+    return str(entity.name or entity.entity_id)
+
+
+def _sent_by(hass: HomeAssistant, origin: str, *, direct: bool) -> list[dict[str, Any]]:
+    """Return the messages of one loaded automation or script.
+
+    Its calls to the center, or with ``direct`` its calls past the center
+    that are no notification in the Home Assistant UI.
+    """
+    domain = origin.partition(".")[0]
+    if domain not in STEP_KEYS:
+        return []
+    entity = next((e for e in _entities(hass, domain) if e.entity_id == origin), None)
+    if entity is None:
+        return []
+    titles = [
+        call_title(step, name)
+        for step, name in _entity_calls(entity, domain)
+        if (name not in CENTER_ACTIONS) is direct
+        and not (direct and _status([name]) == STATUS_PERSISTENT)
+    ]
+    return sent_messages(titles, _entity_name(hass, entity))
+
+
+def config_messages(hass: HomeAssistant, origin: str) -> list[dict[str, Any]]:
+    """Return the messages an automation or script sends through the center.
+
+    Read from its loaded configuration: only the calls to
+    ``notify.message_center`` and ``message_center.send`` count, see
+    ``sent_messages``. Empty when the origin is no loaded automation or
+    script or sends nothing through the center itself (a script it starts
+    does not count).
+    """
+    return _sent_by(hass, origin, direct=False)
+
+
+def direct_messages(hass: HomeAssistant, origin: str) -> list[dict[str, Any]]:
+    """Return the messages an automation or script still sends past the center.
+
+    What it will send once these calls go through the center, as the search
+    counts it: a notification in the Home Assistant UI does not count.
+    """
+    return _sent_by(hass, origin, direct=True)
+
+
+def configured_messages(hass: HomeAssistant, origin: str) -> list[dict[str, Any]]:
+    """Return the messages of an origin by its configuration.
+
+    Its calls to the center, else its calls past the center.
+    """
+    return config_messages(hass, origin) or direct_messages(hass, origin)
+
+
+def multiple_messages(
+    messages: list[dict[str, Any]], seen_count: int
+) -> tuple[str, bool]:
+    """Where the answer comes from and whether an origin sends several messages.
+
+    The configuration decides when it shows calls to the center; otherwise
+    the different titles that arrived from the origin.
+    """
+    if messages:
+        return "config", len(messages) > 1
+    if seen_count:
+        return "seen", seen_count > 1
+    return "none", False
+
+
+def origin_messages(
+    hass: HomeAssistant, origin: str, seen_titles: list[str]
+) -> dict[str, Any]:
+    """Which messages one origin sends, for the page's kind dialog.
+
+    ``seen_titles`` are the different titles that arrived from it, newest
+    first; the center collects them. The calls to the center decide
+    (``config``), else the titles that arrived (``seen``), else the calls
+    that still go past the center (``direct``): an automation found by the
+    search before it was changed. ``any_allowed`` is false for an origin
+    that is no automation or script ("unknown"): no "all messages of" for
+    it, and the titles of all unknown senders are not its messages, so it
+    has none to tell apart.
+    """
+    if not origin_allows_any(origin):
+        return {
+            "source": "none",
+            "messages": [],
+            "seen_titles": [],
+            "multiple": False,
+            "any_allowed": False,
+        }
+    messages = config_messages(hass, origin)
+    source, multiple = multiple_messages(messages, len(seen_titles))
+    if source == "none" and (messages := direct_messages(hass, origin)):
+        source, multiple = "direct", len(messages) > 1
+    return {
+        "source": source,
+        "messages": messages,
+        "seen_titles": seen_titles,
+        "multiple": multiple,
+        "any_allowed": True,
+    }
+
+
+def _probe_title(
+    item: dict[str, Any], suggestion: dict[str, str] | None, name: str
+) -> str | None:
+    """Return the title to look up the kind of a found call with, if there is one.
+
+    The suggested text where there is one; for "all messages of" the title
+    the message will have: its fixed title, the automation's name without a
+    title, and for a computed one its fixed beginning, or nothing but the
+    origin ("") when it has none.
+    """
+    if suggestion is None:
+        return None
+    if "value" in suggestion:
+        return suggestion["value"]
+    if item["title"] is None:
+        return name[:TITLE_MAX_LENGTH]
+    if item["title_template"]:
+        own = suggest_title(item["title"])
+        return own["value"] if own else ""
+    return item["title"]
+
+
 def scan_entities(
     hass: HomeAssistant, kinds: list[Kind]
 ) -> tuple[list[dict[str, Any]], dict[str, int]]:
@@ -226,14 +445,10 @@ def scan_entities(
     config_dir = hass.config.config_dir
     found: list[dict[str, Any]] = []
     counts = {"automation": 0, "script": 0}
-    for domain, key in (
-        ("automation", ("actions", "action")),
-        ("script", ("sequence",)),
-    ):
+    for domain in STEP_KEYS:
         for entity in _entities(hass, domain):
             counts[domain] += 1
-            raw = getattr(entity, "raw_config", None)
-            if not isinstance(raw, dict):
+            if not isinstance(getattr(entity, "raw_config", None), dict):
                 continue
             blueprint = getattr(entity, "referenced_blueprint", None)
             if isinstance(blueprint, str) and blueprint.startswith(f"{DOMAIN}/"):
@@ -242,28 +457,46 @@ def scan_entities(
                 continue
             unique_id = getattr(entity, "unique_id", None)
             object_id = entity.entity_id.split(".", 1)[1]
-            for step, name in find_calls([raw.get(k) for k in key]):
-                item = describe_call(step, name, config_dir)
+            name = _entity_name(hass, entity)
+            calls = list(_entity_calls(entity, domain))
+            items = [describe_call(step, call, config_dir) for step, call in calls]
+            # what it sends once every call goes through the center; a
+            # notification in the Home Assistant UI stays where it is
+            titles = [
+                call_title(step, call)
+                for (step, call), item in zip(calls, items, strict=True)
+                if item["status"] != STATUS_PERSISTENT
+            ]
+            multiple = len(sent_messages(titles, name)) > 1
+            # a script started by an automation counts as that automation
+            origin = entity.entity_id if domain == "automation" else None
+            for item in items:
                 # the UI editor works for what lives in automations.yaml / scripts.yaml
                 edit_url = None
                 if item["file"] == "automations.yaml" and unique_id:
                     edit_url = f"/config/automation/edit/{unique_id}"
                 elif item["file"] == "scripts.yaml":
                     edit_url = f"/config/script/edit/{object_id}"
-                suggestion = item["suggestion"]
-                # a script started by an automation counts as that automation
-                origin = entity.entity_id if domain == "automation" else None
+                suggestion = scan_suggestion(item, origin, name, multiple)
+                probe = _probe_title(item, suggestion, name)
                 kind = (
-                    match_kind(kinds, origin or "", suggestion["value"])
-                    if suggestion
+                    match_kind(
+                        kinds,
+                        origin or "",
+                        probe,
+                        untitled=origin is not None and item["title"] is None,
+                    )
+                    if probe is not None
                     else None
                 )
                 found.append(
                     {
                         **item,
+                        "suggestion": suggestion,
+                        "multiple": multiple,
                         "source": domain,
                         "entity_id": entity.entity_id,
-                        "name": entity.name or entity.entity_id,
+                        "name": name,
                         "origin": origin,
                         "blueprint": blueprint,
                         "edit_url": edit_url,

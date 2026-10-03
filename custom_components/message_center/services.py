@@ -48,8 +48,6 @@ SERVICE_SNOOZE = "snooze"
 SERVICE_FORWARD = "forward"
 SERVICE_LIST = "list"
 
-DEFAULT_TITLE = "Mitteilung"
-
 
 def _storable(value: Any) -> Any:
     """Refuse a text or extra data that the store could not write as JSON.
@@ -160,7 +158,7 @@ async def _intake(call: ServiceCall, *, with_kind: bool) -> dict[str, Any]:
     data = call.data
     try:
         return await center.async_intake(
-            title=data.get("title") or DEFAULT_TITLE,
+            title=data.get("title"),
             message=data["message"],
             data=dict(data.get("data") or {}),
             context=call.context,
@@ -313,7 +311,9 @@ def async_register_services(hass: HomeAssistant) -> None:
                 "title": {
                     "name": "Title",
                     "description": (
-                        "Short and neutral; also used to tell messages apart."
+                        "Short and neutral; also used to tell messages apart. "
+                        "Without a title the message is called after its "
+                        "automation or script."
                     ),
                     "example": "Feuchte: Büro",
                     "selector": {"text": {}},

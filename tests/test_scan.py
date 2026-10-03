@@ -12,6 +12,7 @@ from pytest_homeassistant_custom_component.typing import WebSocketGenerator
 
 from custom_components.message_center.const import DOMAIN
 from custom_components.message_center.scan import (
+    display_title,
     find_calls,
     scan_files,
     suggest_title,
@@ -117,11 +118,12 @@ async def test_scan_finds_nested_calls_with_status_and_suggestions(
     assert humid["name"] == "Klima melden"
     assert humid["target"] == "notify.send_message → notify.handy"
     assert humid["status"] == "direct"
-    assert humid["title"] is None  # the first line stands in for the missing title
-    assert humid["suggestion"] == {
-        "mode": "exact",
-        "value": "Feuchte zu hoch",
-    }
+    assert humid["title"] is None
+    assert humid["first_line"] == "Feuchte zu hoch"
+    # the automation sends several messages; one without a title is called
+    # after the automation, not after its first line
+    assert humid["multiple"] is True
+    assert humid["suggestion"] == {"mode": "exact", "value": "Klima melden"}
     assert humid["kind"] is None
 
     window = by_title["Fenster offen"]
@@ -139,6 +141,9 @@ async def test_scan_finds_nested_calls_with_status_and_suggestions(
     assert script["source"] == "script"
     assert script["entity_id"] == "script.sag_bescheid"
     assert script["origin"] is None  # depends on who starts the script
+    assert script["multiple"] is False
+    # without a known origin there is no "all messages of": the title decides
+    assert script["suggestion"] == {"mode": "exact", "value": "Vom Skript"}
 
     assert not any(i["service"].startswith("light.") for i in found)
     assert len(found) == 7
@@ -261,24 +266,28 @@ def test_device_action_and_title_suggestions() -> None:
         "message": "Hi",
     }
     assert [name for _, name in find_calls({"actions": [step]})] == ["mobile_app"]
-    assert suggest_title("Fest", None) == {"mode": "exact", "value": "Fest"}
-    assert suggest_title(None, "Erste Zeile") == {
-        "mode": "exact",
-        "value": "Erste Zeile",
-    }
-    assert suggest_title("Raum {{ r }}: zu warm", None) == {
+    assert suggest_title("Fest") == {"mode": "exact", "value": "Fest"}
+    assert suggest_title("Raum {{ r }}: zu warm") == {
         "mode": "prefix",
         "value": "Raum",
     }
-    assert suggest_title("{{ x }}", "{{ y }}") is None
-    # a long first line is a sentence, not a headline: no suggestion without a title
+    assert suggest_title("{{ x }}") is None
     sentence = (
         "Keller: Der Sensor meldet seit einer Stunde keinen brauchbaren "
         "Messwert, bitte prüfen."
     )
-    assert suggest_title(None, sentence) is None
-    assert suggest_title(sentence, None) == {"mode": "exact", "value": sentence}
-    assert suggest_title(None, None) is None
+    assert suggest_title(sentence) == {"mode": "exact", "value": sentence}
+    # the first line of the text is no title: the message gets the name of
+    # its automation instead
+    assert suggest_title(None) is None
+
+
+def test_display_of_computed_titles() -> None:
+    """Computed parts of a title are shown as a placeholder."""
+    assert display_title("Fest") == "Fest"
+    assert display_title("Raum {{ r }}: zu warm") == "Raum …: zu warm"
+    assert display_title("{{ a }} {{ b }}") == "…"
+    assert display_title("{% if x %}Auf{% else %}Zu{% endif %}: Tür") == "…: Tür"
 
 
 async def test_scan_needs_admin(
@@ -344,3 +353,128 @@ async def test_scripts_from_the_own_blueprint_are_not_reported(
         hass.config.path("blueprints", "script", DOMAIN, "nachricht_senden.yaml")
     )
     await hass.async_add_executor_job(path.unlink)
+
+
+def notify_step(title: str | None, *, action: str = "notify.mobile_app_handy") -> dict:
+    """Return a notifying step with an optional title."""
+    data = {"message": "Erste Zeile\nmehr"}
+    if title is not None:
+        data["title"] = title
+    return {"action": action, "data": data}
+
+
+def automation(alias: str, *steps: dict) -> dict:
+    """Return an automation with the given steps."""
+    return {
+        "id": alias.lower().replace(" ", "_"),
+        "alias": alias,
+        "triggers": [{"trigger": "event", "event_type": "x"}],
+        "actions": list(steps),
+    }
+
+
+async def test_scan_suggests_all_messages_of_an_automation_that_sends_one(
+    hass: HomeAssistant,
+    phone: list[ServiceCall],
+    make_entry: Any,
+    hass_ws_client: WebSocketGenerator,
+) -> None:
+    """One message: "all messages of this automation"; several: the titles.
+
+    A notification in the Home Assistant UI does not count, the same title
+    twice is one message. A script has no origin of its own until it runs,
+    so its suggestion stays with the title.
+    """
+    assert await async_setup_component(
+        hass,
+        "automation",
+        {
+            "automation": [
+                automation(
+                    "Nur eine",
+                    notify_step("Wäsche fertig"),
+                    notify_step(None, action="persistent_notification.create"),
+                ),
+                automation("Ohne Titel", notify_step(None)),
+                automation(
+                    "Mehrere",
+                    notify_step("Erste", action="notify.message_center"),
+                    notify_step(None),
+                ),
+                automation(
+                    "Gleich zweimal", notify_step("Tür offen"), notify_step("tür offen")
+                ),
+            ]
+        },
+    )
+    assert await async_setup_component(
+        hass,
+        "script",
+        {
+            "script": {
+                "ohne": {"alias": "Skript ohne Titel", "sequence": [notify_step(None)]},
+                "mit": {
+                    "alias": "Skript mit Titel",
+                    "sequence": [notify_step("Hallo")],
+                },
+            }
+        },
+    )
+    entry = make_entry(
+        kinds=[
+            kind_data(name="Wäsche", origin="automation.nur_eine", title_mode="any"),
+            kind_data(name="Sammel", title_mode="exact", title_value="Mehrere"),
+        ]
+    )
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    found = (await scan(hass, hass_ws_client))["found"]
+    items = {
+        (i["name"], i["title"], i["service"]): (
+            i["suggestion"],
+            i["multiple"],
+            i["kind"],
+        )
+        for i in found
+    }
+    any_title = {"mode": "any"}
+    assert items == {
+        ("Nur eine", "Wäsche fertig", "notify.mobile_app_handy"): (
+            any_title,
+            False,
+            "Wäsche",
+        ),
+        ("Nur eine", None, "persistent_notification.create"): (None, False, None),
+        ("Ohne Titel", None, "notify.mobile_app_handy"): (any_title, False, None),
+        ("Mehrere", "Erste", "notify.message_center"): (
+            {"mode": "exact", "value": "Erste"},
+            True,
+            None,
+        ),
+        ("Mehrere", None, "notify.mobile_app_handy"): (
+            {"mode": "exact", "value": "Mehrere"},
+            True,
+            "Sammel",
+        ),
+        ("Gleich zweimal", "Tür offen", "notify.mobile_app_handy"): (
+            any_title,
+            False,
+            None,
+        ),
+        ("Gleich zweimal", "tür offen", "notify.mobile_app_handy"): (
+            any_title,
+            False,
+            None,
+        ),
+        ("Skript ohne Titel", None, "notify.mobile_app_handy"): (None, False, None),
+        ("Skript mit Titel", "Hallo", "notify.mobile_app_handy"): (
+            {"mode": "exact", "value": "Hallo"},
+            False,
+            None,
+        ),
+    }
+    origins = {i["name"]: i["origin"] for i in found}
+    assert origins["Nur eine"] == "automation.nur_eine"
+    assert origins["Skript ohne Titel"] is None

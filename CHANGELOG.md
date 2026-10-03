@@ -4,6 +4,19 @@ Versions follow `major.minor.patch`. Published interfaces (README, "Interfaces a
 
 From 0.11.1b1 on, every version is a GitHub release. The betas before 1.0 (0.11.1bN) are public test versions: until 1.0 an interface may still change, and such a change is marked **Contract change**. From 1.0.0 on, interfaces are only extended within a major version. The versions up to 0.11.0 were development steps in the author's home without releases.
 
+## Unreleased
+
+- **Contract change:** a message sent to `notify.message_center` without a title is called after its automation or script (cut to 100 characters), no longer "Mitteilung"; key, `message_id` and the kind it gets follow that title. With an unknown origin it stays "Mitteilung". `send` still needs a title. The name is the one of the origin's state, so a name given in the entity settings wins over the alias. What follows from it:
+  - A message kind that waits for "Mitteilung" (from one automation or from any) still takes these messages, with its priority and settings, as long as no kind matches their new title. Better change it to "all messages of this automation".
+  - Once after the update, an open or delivered message without a title is not replaced by the next one: that one gets a new `message_id`, its spacing starts anew, and a second push appears next to the old one. An entry "Mitteilung" under *New* can be dismissed.
+  - `message_center.discard` with `origin` and the title "Mitteilung" no longer finds these messages; the same holds for automations that filter events or attributes by that title.
+  - From now on, renaming the automation (alias or entity settings) gives its untitled messages a new title and identity, with the same effects. A kind "exact ‹old name›" then no longer matches; "all messages of this automation" does.
+- New title condition for message kinds: "all messages of this automation" (`any`). It takes every title of one automation or script and needs that origin; among the kinds of the same origin it is the weakest condition, below "contains".
+- A message kind whose condition (origin, comparison and text, case aside) another kind already has, an inactive one too, is refused. Spaces around the text of a condition are dropped when a kind is saved.
+- **Way back to 0.11.1b1:** first delete the kinds with "all messages of this automation" or change their condition. 0.11.1b1 does not know this condition and does not start while such a kind exists. The stores of messages and history are unchanged.
+- The search suggests "all messages of this automation" for an automation that sends one message. For a call without a title it no longer suggests the first line of the text: such a message gets the name of its automation.
+- A lamp marked "pulse even when off" pulses even if it is missing from the list of lamps for the light pulse.
+
 ## 0.11.1b1 (2026-10-02)
 
 First public beta. Install it through HACS as a custom repository; please report what breaks as an issue.

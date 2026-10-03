@@ -13,7 +13,7 @@ marks it unclear instead of sending it again.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 import contextlib
 from datetime import datetime, timedelta
 import logging
@@ -74,6 +74,7 @@ from .const import (
     DEFAULT_LIGHT_SPACING,
     DEFAULT_PULSE_MS,
     DEFAULT_SNOOZE_MINUTES,
+    DEFAULT_TITLE,
     DOMAIN,
     EVENT_DELIVERED,
     EVENT_DISCARDED,
@@ -83,6 +84,7 @@ from .const import (
     HOUSEKEEPING_INTERVAL,
     LIGHT_TIMEOUT,
     MAX_EFFECT_CONTEXTS,
+    MAX_SEEN_TITLES,
     MAX_UNKNOWN,
     PLATFORM_ANDROID,
     RECIPIENT_REPAIR_AFTER,
@@ -93,6 +95,7 @@ from .const import (
     SUBENTRY_KIND,
     SUBENTRY_RULE,
     TEST_ORIGIN,
+    TITLE_MAX_LENGTH,
 )
 from .delivery import Recipient, async_push, async_push_tts, error_trace
 from .kinds import Group, Kind, match_kind
@@ -334,8 +337,14 @@ class MessageCenter:
         self.history_days = int(options.get(CONF_HISTORY_DAYS, DEFAULT_HISTORY_DAYS))
         self.hide_titles = bool(options.get(CONF_HIDE_TITLES, False))
         self.allow_alarm = bool(options.get(CONF_ALLOW_ALARM, False))
-        self.lights = [str(e) for e in options.get(CONF_LIGHTS, [])]
         self.lights_always = [str(e) for e in options.get(CONF_LIGHTS_ALWAYS, [])]
+        # "always" marks lamps of the list; one saved without its lamp in
+        # the list by an older page belongs to the lamps as well
+        self.lights = list(
+            dict.fromkeys(
+                [*(str(e) for e in options.get(CONF_LIGHTS, [])), *self.lights_always]
+            )
+        )
         self.forward_script = str(options.get(CONF_FORWARD_SCRIPT) or "") or None
         self.effect_scripts = {
             n: str(options[key])
@@ -570,6 +579,102 @@ class MessageCenter:
         """Unknown origin/title pairs, most recent first."""
         return sorted(self.unknown.values(), key=lambda u: u["last_seen"], reverse=True)
 
+    # ----- titles seen, for assigning kinds on the page ---------------------
+
+    def _seen_records(
+        self, *, with_new: bool
+    ) -> Iterator[tuple[str, str | None, str, datetime | str | None]]:
+        """Origin, origin name, title and last arrival of every message held.
+
+        From the working store, the pending history and the history; with
+        ``with_new`` also the pairs of "new". The arrival of a stored entry
+        is left as text; ``_seen_at`` reads it where the order matters.
+        """
+        for msg in self.book.messages.values():
+            yield msg.origin, msg.origin_name, msg.title, msg.updated_at
+        for entry in (*self.book.history, *self.history.entries):
+            yield (
+                entry["origin"],
+                entry.get("origin_name"),
+                entry["title"],
+                entry.get("updated_at") or entry.get("accepted_at"),
+            )
+        if with_new:
+            for item in self.unknown.values():
+                yield (
+                    item["origin"],
+                    item.get("origin_name"),
+                    item["title"],
+                    item.get("last_seen"),
+                )
+
+    @staticmethod
+    def _seen_at(value: datetime | str | None) -> datetime:
+        """Time of a record; one that cannot be read counts as oldest."""
+        if isinstance(value, datetime):
+            return value
+        return (value and dt_util.parse_datetime(value)) or datetime.min.replace(
+            tzinfo=dt_util.UTC
+        )
+
+    def seen_pairs(self) -> list[dict[str, Any]]:
+        """Origin/title pairs of the stored messages, newest first, each once.
+
+        From the working store, the pending history and the history. A title
+        counts without regard to case and is given as it arrived last; the
+        origin's name is the latest one known.
+        """
+        pairs: dict[tuple[str, str], dict[str, Any]] = {}
+        for origin, name, title, raw in self._seen_records(with_new=False):
+            at = self._seen_at(raw)
+            pair = pairs.get((origin, title.casefold()))
+            if pair is None:
+                pairs[(origin, title.casefold())] = {
+                    "origin": origin,
+                    "origin_name": name,
+                    "title": title,
+                    "at": at,
+                }
+            elif at > pair["at"]:
+                pair.update(title=title, at=at, origin_name=name or pair["origin_name"])
+            elif pair["origin_name"] is None:
+                pair["origin_name"] = name
+        ordered = sorted(pairs.values(), key=lambda p: p["at"], reverse=True)
+        return [
+            {
+                "origin": p["origin"],
+                "origin_name": p["origin_name"],
+                "title": p["title"],
+                "last_seen": p["at"].isoformat(),
+            }
+            for p in ordered
+        ]
+
+    def seen_titles(self, origin: str, limit: int = MAX_SEEN_TITLES) -> list[str]:
+        """Different titles of one origin, newest first, at most ``limit``.
+
+        From the working store, the pending history, the history and "new";
+        a title counts without regard to case, as it arrived last.
+        """
+        newest: dict[str, tuple[datetime, str]] = {}
+        for found, _name, title, raw in self._seen_records(with_new=True):
+            if found != origin:
+                continue
+            at = self._seen_at(raw)
+            key = title.casefold()
+            if key not in newest or at > newest[key][0]:
+                newest[key] = (at, title)
+        ordered = sorted(newest.values(), key=lambda item: item[0], reverse=True)
+        return [title for _at, title in ordered[:limit]]
+
+    def title_counts(self, origins: set[str]) -> dict[str, int]:
+        """Count the different titles of each origin, as ``seen_titles`` finds them."""
+        titles: dict[str, set[str]] = {origin: set() for origin in origins}
+        for origin, _name, title, _at in self._seen_records(with_new=True):
+            if origin in titles:
+                titles[origin].add(title.casefold())
+        return {origin: len(found) for origin, found in titles.items()}
+
     async def async_dismiss_unknown(self, origin: str, title: str) -> bool:
         """Drop one pair from "new, please classify"; it returns if it arrives again.
 
@@ -610,7 +715,7 @@ class MessageCenter:
     async def async_intake(
         self,
         *,
-        title: str,
+        title: str | None,
         message: str,
         context: Context,
         data: dict[str, Any] | None = None,
@@ -620,6 +725,12 @@ class MessageCenter:
     ) -> dict[str, Any]:
         """Take a message from notify or send.
 
+        A message without a title is called after its origin, the
+        automation or script that sent it, and "Mitteilung" when the origin
+        is not known. Key, id and kind follow that title; a kind made for
+        "Mitteilung" before still takes it when no kind matches the new
+        title (see ``match_kind``).
+
         A message that arrives under a context of the center's own effects,
         or under a child of one, was sent by such an effect (a script, an
         automation reacting to a pulsed lamp). It is delivered like any
@@ -628,13 +739,20 @@ class MessageCenter:
         """
         await self._async_require_ready()
         origin = resolve_origin(self.hass, context)
+        untitled = not title and origin.known and bool(origin.name)
+        if not title:
+            title = (origin.name if untitled and origin.name else DEFAULT_TITLE)[
+                :TITLE_MAX_LENGTH
+            ]
         from_effect = (
             context.id in self._effect_contexts
             or context.parent_id in self._effect_contexts
         )
         kind = self.kinds.get(kind_id) if kind_id else None
         if kind is None and not kind_id:
-            kind = match_kind(list(self.kinds.values()), origin.entity_id, title)
+            kind = match_kind(
+                list(self.kinds.values()), origin.entity_id, title, untitled=untitled
+            )
         effective_priority = kind.priority if kind else (priority or 1)
         if kind is None and priority is not None:
             effective_priority = priority

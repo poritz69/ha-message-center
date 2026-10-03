@@ -181,6 +181,33 @@ async def test_always_targets_pulse_on_then_off(
     assert len(calls) == 4
 
 
+@pytest.mark.parametrize("lights", [["light.flur"], []])
+async def test_always_lamp_outside_the_list_pulses_too(
+    hass: HomeAssistant, phone: list[ServiceCall], make_entry: Any, lights: list[str]
+) -> None:
+    """A lamp marked "always" belongs to the lamps even when the list lacks it.
+
+    Saved by an older page, "always" could hold a lamp that "lights" did not;
+    it was ignored. Now the two lists are one when they are read.
+    """
+    blink = await lamps(hass, on=["light.flur"])  # light.kueche is off
+    entry = await setup(
+        hass,
+        make_entry,
+        kinds=[kind_data(priority=2)],
+        options={"lights": lights, "lights_always": ["light.kueche"]},
+    )
+    center = entry.runtime_data
+    assert center.lights == [*lights, "light.kueche"]
+    await notify(hass)
+    await hass.async_block_till_done()
+    expected = ", ".join([*lights, "light.kueche"])
+    assert [e["detail"] for e in events_of(hass, "light")] == [expected]
+    calls = [(c.service, c.data["entity_id"]) for c in blink]
+    assert ("turn_on", ["light.kueche"]) in calls
+    assert calls.count(("turn_off", ["light.kueche"])) == 1
+
+
 async def test_option_schema_rejects_non_scripts(
     hass: HomeAssistant, phone: list[ServiceCall], make_entry: Any, hass_ws_client: Any
 ) -> None:
