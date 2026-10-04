@@ -10,7 +10,8 @@ Für den, der die Integration betreut. Sie beschreibt, wo Handlungsbedarf ersche
 | Benachrichtigung in Home Assistant | „… Meldungen konnten noch nicht zugestellt werden“: Solange Zustellungen scheitern; verschwindet von selbst |
 | Einstellungen → Geräte & Dienste → Message Center | „Einrichtung fehlgeschlagen, wird erneut versucht“ mit dem Grund „kann seinen Speicher nicht lesen“: Die Datei in `.storage` ist nicht lesbar oder hat ein unerwartetes Format |
 | Seite, Kopf | „Bereit“ oder „Nicht bereit“ |
-| Seite, Übersicht | „Gestört“ größer 0 · „Neu“ größer 0 (unbewertete Meldungen) |
+| Seite, Übersicht | „Gestört“ größer 0 · „Neu“ größer 0 (unbewertete Meldungen; ihr Push endet mit „⚠ Noch nicht eingeordnet – bitte im Message Center bewerten“) |
+| Seite, Meldungen | Meldungsarten „verwaist“ (ausgegraut): Ihre Automation oder ihr Skript gibt es nicht mehr; sie wirken auf nichts und können gelöscht werden |
 | Entität „Bereit“ | aus = die Zentrale nimmt nichts an; Attribut `reason` nennt den Grund. Bei nicht schreibbarem Speicher versucht sie es alle 60 s von selbst wieder und geht ohne Neustart auf „an“ |
 | GitHub, Reiter Actions | Wöchentlicher Test gegen die Mindestversion, die aktuelle und die neueste Home-Assistant-Version. Ein roter oder ausgebliebener Lauf gilt nicht als bestanden |
 | Ankündigungen von Home Assistant | Abkündigungen im Log („deprecated“) und im Entwickler-Blog; umsetzen, bevor sie wirksam werden |
@@ -45,7 +46,7 @@ Für den, der die Integration betreut. Sie beschreibt, wo Handlungsbedarf ersche
    | INFO `Alarm light started by …` / `Alarm light ended by …` | Alarmlicht an und aus, mit Auslöser |
 
 5. **Diagnose-Download:** Einstellungen → Geräte & Dienste → Message Center → Diagnose herunterladen. Enthält Optionen, Meldungsarten, Regeln und die Meldungen als Zusammenfassung, **ohne Texte, aber mit Titeln**. Vor dem Weitergeben durchlesen.
-6. **Nachstellen:** Test-Knopf je Stufe in den Einstellungen (ohne Verlauf), oder in den Entwicklerwerkzeugen `notify.message_center` mit Titel und Text aufrufen (Herkunft dann „unbekannt“).
+6. **Nachstellen:** Test-Knopf je Stufe in den Einstellungen (ohne Verlauf; steht dort „Speichern“, sind Änderungen noch nicht gespeichert, und der Test nutzt immer den gespeicherten Stand), oder in den Entwicklerwerkzeugen `notify.message_center` mit Titel und Text aufrufen (Herkunft dann „unbekannt“, ohne Titel heißt die Meldung dann „Mitteilung“).
 
 **Typische Ursachen**
 
@@ -55,7 +56,10 @@ Für den, der die Integration betreut. Sie beschreibt, wo Handlungsbedarf ersche
 | Meldung „verworfen“ mit Grund Regel, obwohl sie schon bei einem Handy war | Nein: Hat ein Handy die Meldung, endet eine verwerfende Regel den Zyklus als „zugestellt“ mit gescheiterten Empfängern. „Verworfen“ nur, wenn kein Handy sie hatte |
 | Meldung wartet „Mindestabstand bis …“ | Abstand der Meldungsart |
 | Meldung „verfallen“ | Verfall der Meldungsart war kürzer als die Wartezeit |
-| Bekannte Meldung unter „Neu“ | Titel in der Automation geändert, Titelbedingung passt nicht mehr |
+| Bekannte Meldung unter „Neu“ | Titel in der Automation geändert, Titelbedingung passt nicht mehr. Bei einer Meldung ohne Titel ist der Titel der Name der Automation (wie in ihren Entitätseinstellungen): Umbenennen macht sie zu einer neuen Meldung. „Alle Meldungen dieser Automation“ (`any`) hängt nicht am Titel |
+| Push öffnet Home Assistant, obwohl „Beim Antippen öffnen: Message Center“ gewählt ist | Der Absender gibt selbst `clickAction` oder `url` in `data` mit (sein Ziel gewinnt; leere Werte zählen nicht), oder das Handy gehört keinem Administrator. Ein Push einer unbewerteten Meldung öffnet den Dialog zum Bewerten (`/message-center?classify=<message_id>`), sonst `/message-center?message=<message_id>` |
+| Push trägt am Ende „⚠ Noch nicht eingeordnet …“ | Keine Meldungsart nimmt die Meldung. Die Zeile steht nur im Push, nicht im Speicher, im Verlauf, in Ereignissen oder Skripten; nach dem Einordnen fällt sie weg |
+| Zustellregel wirkt nie | Ihr Schalter (Modus) wird nie geschaltet. „Schalter anlegen“ im Dialog legt nur den Helfer `input_boolean` an; schalten muss ihn eine Automation oder das Dashboard |
 | Fehler `ServiceNotFound` am Empfänger | Das Handy heißt anders oder die App ist abgemeldet; Empfänger im Reiter „Empfänger“ neu wählen |
 | „unklar“ nach Neustart | Neustart während des Sendens oder Lücke über 60 Minuten; von Hand entscheiden |
 | `script_failed` unter einer Meldung | Das gewählte Skript fehlt, hat einen Fehler oder braucht länger als 30 Sekunden |
@@ -80,7 +84,7 @@ Ziel ist die letzte funktionierende Kombination aus Code, Einstellungen und Date
 
 1. Änderung mit Test. Was einen veröffentlichten Anschluss betrifft (README, Abschnitt „Interfaces and their contracts“), wird ab 1.0 nur erweitert, nie umgedeutet; bis 1.0 darf er sich noch ändern, die Änderung wird dann im CHANGELOG als **Contract change** markiert.
 2. Version anheben in `custom_components/message_center/manifest.json`, `frontend/package.json` und `frontend/package-lock.json` (dort zweimal). `tests/test_repository_files.py` prüft, dass die drei übereinstimmen und zum Kopf des CHANGELOG passen. Die Version steht in der Adresse des Seitencodes (`panel.py` hängt sie als `?v=` an); ohne Versionssprung zeigt der Browser die alte Seite aus dem Cache.
-3. Seite bauen, wenn sich `frontend/src/` geändert hat: `cd frontend && npm run check && npm run build`. Die beiden erzeugten Dateien in `custom_components/message_center/frontend/` mit einchecken; die CI prüft, dass sie zum Quellcode passen.
+3. Seite bauen, wenn sich `frontend/src/` geändert hat: `cd frontend && npm run check && npm test && npm run build`. Die beiden erzeugten Dateien in `custom_components/message_center/frontend/` mit einchecken; die CI prüft, dass sie zum Quellcode passen.
 4. Prüfen: `.venv/bin/pytest`, `.venv/bin/ruff check .`, `.venv/bin/ruff format --check .`
 5. Eintrag im `CHANGELOG.md`. Wird die Mindestversion in `hacs.json` angehoben, gehört das dazu.
 6. Commit, Push, CI abwarten. Dann Tag und **Release** auf GitHub: Ab 0.11.1b1 ist jede Version ein GitHub-Release (HACS zeigt Releases, nicht bloße Tags).

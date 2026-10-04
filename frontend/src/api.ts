@@ -1,6 +1,7 @@
 import type {
   Config, HomeAssistant, KindMatches, MessageEntry, Messages, OriginMessages, Options, Overview, ScanResult, TitleMode,
 } from "./types";
+import type { CreatedSwitch } from "./rule-logic";
 
 const D = "message_center";
 
@@ -66,6 +67,14 @@ export const fetchKindMatches = (
 ) => hass.callWS<KindMatches>({
   type: `${D}/kind_matches`, ...condition, ...(kindId ? { kind_id: kindId } : {}), ...(probe ? { probe } : {}),
 });
+
+/**
+ * Create a toggle helper (input_boolean) through Home Assistant's own command,
+ * as its helper settings do; administrators only. Message Center only creates
+ * it: it never switches it.
+ */
+export const createSwitch = (hass: HomeAssistant, name: string) =>
+  hass.callWS<CreatedSwitch>({ type: "input_boolean/create", name });
 
 export const subscribe = (hass: HomeAssistant, callback: () => void) =>
   hass.connection.subscribeMessage(() => callback(), { type: `${D}/subscribe` });

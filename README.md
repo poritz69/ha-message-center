@@ -111,9 +111,9 @@ You need at least one phone or tablet with the Home Assistant Companion App, bec
 
 1. **Settings → Devices & services → Add integration → Message Center.** Choose the phones that receive the messages (at least one). Only one Message Center can be set up.
 2. Open **Message Center** in the sidebar. The page is for administrators only, because it shows message texts. An introduction card on the overview explains the idea in five short steps; it can be hidden and shown again from the settings tab.
-3. Point an automation to `notify.message_center` (see [Sending messages](#sending-messages)). The button **Search Home Assistant** on the *Message kinds* tab lists the places that still notify a phone directly.
+3. Point an automation to `notify.message_center` (see [Sending messages](#sending-messages)). In the automation editor, search for “Message Center” at the top of *Add action*. Pick the entry called just “Message Center”, not “Message Center: Send”. The button **Search Home Assistant** on the *Message kinds* tab lists the places that still notify a phone directly, and says for each whether it needs a title of its own.
 4. The first message of each sort shows up under **New, please classify**. "Classify" turns it into a message kind.
-5. Optionally create a delivery rule on the *Delivery rules* tab, for example: helper "night mode" is `on` → hold priorities 1 and 2, pass priority 3, for 12 hours at most. Create the helper in Home Assistant first.
+5. Optionally create a delivery rule on the *Delivery rules* tab, for example: toggle "night mode" is `on` → hold priorities 1 and 2, pass priority 3, for 12 hours at most. The rule's dialog explains what such a mode is and can create the toggle (a helper `input_boolean`) for you. Message Center only creates it and never switches it: an automation or a dashboard turns it on and off.
 
 Everything is configured in the UI. There is no YAML and nothing needs a restart.
 
@@ -206,20 +206,20 @@ All settings live on the page in the sidebar. This is a deliberate choice: the p
 
 | Tab | What you set |
 |---|---|
-| **Message kinds** | Groups (name, icon, defaults) and kinds: name, origin (one automation or any), title condition, group, priority, "do not hold" (ignore delivery rules), spacing in minutes (minimum time between two push cycles of the same message), expiry in minutes (an undelivered message is discarded after that), light pulse (by priority / always / never), active. "All messages of this automation" needs a named origin. If several kinds match, the most specific one wins: a named origin before "any", "exact" before "begins with" before "contains" before "all messages of this automation", then the longer condition. Two kinds cannot have the same condition. |
-| **Delivery rules** | Name, entity, state, effect per priority (pass / hold / discard), maximum duration (1–168 h, default 12). If the entity is unavailable, the rule counts as active and a repair issue appears. |
+| **Message kinds** | Groups (name, icon, defaults) and kinds: name, origin (one automation or any), title condition, group, priority, "do not hold" (ignore delivery rules), spacing in minutes (minimum time between two push cycles of the same message), expiry in minutes (an undelivered message is discarded after that), light pulse (by priority / always / never), active. "All messages of this automation" needs a named origin. If several kinds match, the most specific one wins: a named origin before "any", "exact" before "begins with" before "contains" before "all messages of this automation", then the longer condition. Two kinds cannot have the same condition: a double condition (an inactive kind counts too) is refused with a link to the existing kind. The dialog of a kind says in plain words what it applies to. Opened from *New*, from the search or to edit, it shows origin and title greyed out (*Edit condition (advanced)* opens them) and takes "all messages of this automation" for an automation that sends one message; for one that sends several it lists the messages it may send. It shows which earlier messages the condition matches and which kind wins an overlap; before a change that would send the original message back to *New*, saving asks. A new kind without a template can *Take from “New”*. A kind whose automation no longer exists is shown greyed out as "orphaned"; it affects nothing and can be deleted. |
+| **Delivery rules** | Name, entity, state, effect per priority (pass / hold / discard), maximum duration (1–168 h, default 12). If the entity is unavailable, the rule counts as active and a repair issue appears. The dialog explains what a mode is (a helper toggle such as "night mode", "vacation" or "away") and can create such a toggle (`input_boolean`, through Home Assistant's own helper command) and choose it for the rule. Message Center never switches it and creates no automation for it. |
 | **Recipients** | Which Companion App devices receive the messages (at least one), whether they are reachable and their last error. |
-| **Settings → priority → effect** | Per priority: an optional script (see [Scripts](#scripts-own-effect-and-forwarding)) and a **Test** button that sends a test push without any record. |
-| **Settings → light pulse** | Lights and switches that pulse for priority 2; which of them pulse even when off; off time (100–10 000 ms, default 500); minimum spacing between pulses (0–600 s, default 0). |
+| **Settings → priority → effect** | Per priority: an optional script (see [Scripts](#scripts-own-effect-and-forwarding)) and a **Test** button that sends a test push without any record. A test uses the saved settings: while the tab holds a change that is not saved, *Save* takes the place of each *Test* button. |
+| **Settings → light pulse** | Lights and switches that pulse for priority 2, as one list in which each has its own switch "also when off" (then it goes briefly on and off again when it is off); off time (100–10 000 ms, default 500); minimum spacing between pulses (0–600 s, default 0). |
 | **Settings → alarm** | Lights and switches for the alarm light; interval (100–5000 ms, default 1000); maximum duration (5–3600 s, default 300); test duration; Android alarm channel; spoken announcement of the title (Android). Do not choose a lamp that is itself the trigger of a message of priority 3 (an automation reporting that lamp): every step of the alarm would then produce a new message and a push for as long as the alarm runs. |
 | **Settings → buttons on the push** | What a tap on the push opens (Home Assistant, the default, or Message Center with the message; see [Tapping the push](#tapping-the-push)); "Later" (one or two fixed durations, or typed minutes), "To assistant", and a script to run when a message is forwarded. |
 | **Settings → options** | History retention (1–365 days, default 30); sidebar entry on/off; keep titles out of history and attributes (then also out of the events, the logbook and the push `tag`); allow priority 3 through `message_center.send`; replace repeats silently. |
 
-The other two tabs show what is going on: **Open** (everything not finished yet, with state, reason and deadline, and the buttons *send now*, *discard*, *later*, *to assistant*) and **History** (delivered, discarded and failed messages with their interventions). *Send now* also works on a message that is retrying: the recipients that do not have it yet are tried at once, whether a rule holds the retry back or its next time lies ahead.
+The other two tabs show what is going on: **Open** (everything not finished yet, with state, reason and deadline, and the buttons *send now*, *discard*, *later*, *to assistant*) and **History** (delivered, discarded and failed messages with their interventions; its column *Time* is when a message ended, always with date and time, newest or oldest first as chosen, and the browser remembers that choice). *Send now* also works on a message that is retrying: the recipients that do not have it yet are tried at once, whether a rule holds the retry back or its next time lies ahead.
 
 ## Interfaces and their contracts
 
-Only what is listed here is meant to be used by automations and other integrations. Everything else, including the WebSocket commands `message_center/*` behind the page, is internal and may change.
+Only what is listed here is meant to be used by automations and other integrations. Everything else, including the WebSocket commands `message_center/*` behind the page (such as `message_center/origin_messages` and `message_center/kind_matches`), is internal and may change.
 
 **`message_id`** is the handle of a message wherever it appears (responses, entity attributes, events, script variables, the push `tag`, the tap target (`clickAction`/`url`), the button ids, the page): an opaque string of 16 hexadecimal characters, stable for all generations of a message and across restarts, without `:` or `|`. It has no structure to read; the origin and the title stand next to it wherever it appears.
 
@@ -412,7 +412,10 @@ Titles and texts of messages are treated as sensitive.
 |---|---|
 | A message did not arrive | *Open* tab: is it waiting, and why (rule, spacing, snoozed)? *History*: was it discarded or did it expire? *Recipients*: last error of the phone. |
 | A message arrived although night mode is on | Its kind has "do not hold", or it is priority 3, or the rule exceeded its maximum duration (repair issue). |
-| A message shows up under "New" again | Its title changed, so the kind's title condition no longer matches, or the automation of a message without a title was renamed. |
+| A message shows up under "New" again | Its title changed, so the kind's title condition no longer matches, or the automation of a message without a title was renamed. "All messages of this automation" does not depend on the title. |
+| A tap on the push opens Home Assistant, not the page | Check *Open on tap*. A target of the sender (`clickAction` or `url`) wins, and phones of users who are no administrators always open Home Assistant. |
+| A kind is greyed out as "orphaned" | Its automation or script no longer exists. Delete the kind. |
+| A delivery rule never applies | Its entity never reaches the state. Message Center does not switch the toggle of a mode, not even one it created: an automation or a dashboard must. |
 | No light pulse | The lights must be on (unless marked "also when off"), the switch "Light pulse" must be on, and the kind must not say "never". The reason is noted under the message: `light_skipped` with "minimum spacing", "no lamp on" or "message from an own effect"; `light_failed` ("no right to the lamps") when the sender may not switch them. |
 | A script did not run | `script_failed`: the script is missing, failed or took longer than 30 seconds. `script_skipped`: the message came from an own effect of Message Center (depth 1), see [Scripts](#scripts-own-effect-and-forwarding). |
 | A retry does not happen although it is due | A delivery rule holds the priority: the reason says "held back: ‹rule› until …" and `next_try` is empty. It goes out at the rule's end, or now with *send now*. |
@@ -429,6 +432,7 @@ Repair issues appear under **Settings → System → Repairs**. A diagnostics do
 2. Remove the integration in HACS (or delete `custom_components/message_center`) and restart Home Assistant.
 3. Point your automations back to their phones, or they will fail with "action not found".
 4. The blueprint in `blueprints/script/message_center/` stays; delete it if you no longer need it.
+5. Toggles created with *Create toggle* in a rule's dialog are ordinary helpers and stay; delete them under **Settings → Devices & services → Helpers** if you no longer need them.
 
 ## Design principles
 
@@ -444,7 +448,7 @@ python3.14 -m venv .venv
 .venv/bin/pytest
 .venv/bin/ruff check . && .venv/bin/ruff format --check .
 
-cd frontend && npm ci && npm run check && npm run build
+cd frontend && npm ci && npm run check && npm test && npm run build
 ```
 
 The tests run an in-memory Home Assistant provided by `pytest-homeassistant-custom-component`. CI runs them against the minimum version from `hacs.json`, the current version from `requirements_test.txt` and the newest release of the test library, weekly and on every push. The page is written in TypeScript with Lit and bundled with esbuild; the bundle is committed, so installing needs no Node.

@@ -23,6 +23,10 @@ import type { Config, Kind, KindMatches, MatchedPair, MessageEntry, Messages, Or
 //                        unfolds); ?push=classify: the push of a message no kind takes ("?classify=<id>"); ?push=missing:
 //                        a message no longer stored. The page follows the real link (best with ?only=wide: one frame
 //                        follows it).
+//   ?tab=history&order=oldest   the history oldest first (without it: as this browser chose, newest first by default)
+//   ?tab=settings&dirty=1  the settings with a change not saved yet: "Save" stands where "Test" was
+//   ?tab=rules&rule=new  the dialog of a new delivery rule; rule=help unfolds "What is a mode?", rule=name opens the
+//                        name field of "Create toggle", rule=created creates the toggle and chooses it for the rule
 const params = new URLSearchParams(location.search);
 document.documentElement.dataset.theme = params.get("theme") === "light" ? "light" : "dark";
 const en = params.get("lang") === "en";
@@ -67,6 +71,25 @@ class Icon extends LitElement {
 class MenuButton extends LitElement {
   static styles = css`:host { display: inline-flex; width: 40px; height: 40px; align-items: center; justify-content: center; opacity: .9; }`;
   render() { return html`<svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"></path></svg>`; }
+}
+
+/** A switch as Home Assistant draws it: "checked", and a "change" event on a click. */
+class Switch extends LitElement {
+  @property({ type: Boolean }) public checked = false;
+  static styles = css`
+    :host { display: inline-flex; cursor: pointer; }
+    .sw { width: 36px; height: 20px; border-radius: 10px; background: var(--divider-color); position: relative; flex: none; }
+    .sw.on { background: color-mix(in srgb, var(--primary-color) 55%, transparent); }
+    .sw::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: var(--secondary-text-color); }
+    .sw.on::after { left: 18px; background: var(--primary-color); }
+  `;
+  render() {
+    return html`<span class="sw ${this.checked ? "on" : ""}" @click=${(e: Event) => {
+      e.preventDefault();
+      this.checked = !this.checked;
+      this.dispatchEvent(new Event("change", { bubbles: true, composed: true }));
+    }}></span>`;
+  }
 }
 
 /** Shows the fields of a form as plain rows. The real forms come from Home Assistant and look like its own dialogs. */
@@ -121,7 +144,7 @@ class Dialog extends LitElement {
 }
 
 for (const [tag, cls] of [["ha-card", Card], ["ha-button", Button], ["ha-icon", Icon], ["ha-menu-button", MenuButton], ["ha-form", Form],
-  ["ha-dialog", Dialog]] as const) {
+  ["ha-dialog", Dialog], ["ha-switch", Switch]] as const) {
   if (!customElements.get(tag)) customElements.define(tag, cls);
 }
 
@@ -174,6 +197,8 @@ interface Example {
   sent: string[];
   /** the helper the night rule watches */
   nightEntity: string;
+  /** the lamps of the settings, with the names Home Assistant shows */
+  lamps: Record<string, string>;
 }
 
 /** What an automation sends: fixed titles as they are, computed ones with "…" for the computed parts. */
@@ -205,21 +230,23 @@ const germanExample = (): Example => {
     recent: [
       msg({ title: "Wassermelder Keller", message: "Wasser am Boden erkannt. Bitte sofort prüfen.", state: "delivered", priority: 3,
         origin: "automation.wasser", origin_name: "Sicherheit – Wasser", kind: "Wasseralarm", group: "Sicherheit", since: ago(114),
-        delivered_at: ago(114), reason: "zugestellt",
+        delivered_at: ago(114), ended_at: ago(114), reason: "zugestellt",
         events: [{ at: ago(114), kind: "alarm_light", source: "center", detail: "3 Lampen" }, { at: ago(113), kind: "snoozed", source: "phone", detail: "30 min" },
           { at: ago(111), kind: "forwarded", source: "page", detail: "Was tun?" }] }),
       msg({ title: "Fenster offen", message: "Das Fenster im Büro ist seit 20 min offen, draußen sind es 4 °C.", state: "delivered", priority: 2,
         origin: "automation.fenster", origin_name: "Klima – Fenster überwachen", kind: "Fenster offen", group: "Klima", since: ago(190),
-        delivered_at: ago(190), reason: "zugestellt",
+        delivered_at: ago(190), ended_at: ago(190), reason: "zugestellt",
         events: [{ at: ago(190), kind: "light", source: "center", detail: "light.flur, light.kueche" }] }),
       // what the appliance automation sent before; its entries in "new" were dismissed
       msg({ title: "Trockner fertig", message: "Die Wäsche im Trockner ist trocken.", state: "delivered", priority: 1,
-        origin: "automation.geraete", origin_name: "Haushalt – Geräte melden", since: ago(260), delivered_at: ago(260), reason: "zugestellt" }),
+        origin: "automation.geraete", origin_name: "Haushalt – Geräte melden", since: ago(260), delivered_at: ago(260), ended_at: ago(260),
+        reason: "zugestellt" }),
       msg({ title: "Akku schwach: Fenstersensor Bad", message: "Der Akku des Fenstersensors im Bad steht bei 9 %.", state: "delivered", priority: 1,
-        origin: "automation.geraete", origin_name: "Haushalt – Geräte melden", since: ago(610), delivered_at: ago(610), reason: "zugestellt" }),
+        origin: "automation.geraete", origin_name: "Haushalt – Geräte melden", since: ago(610), delivered_at: ago(610), ended_at: ago(610),
+        reason: "zugestellt" }),
       msg({ title: "Sicherung abgeschlossen", message: "Die nächtliche Sicherung ist in 4 min durchgelaufen.", state: "discarded", priority: 1,
         origin: "automation.sicherung", origin_name: "Server – Sicherung", kind: "Sicherung", group: "Server", since: ago(1130),
-        reason: "verworfen durch Regel" }),
+        ended_at: ago(1130), reason: "verworfen durch Regel", generation: 2 }),
     ],
   };
 
@@ -264,7 +291,7 @@ const germanExample = (): Example => {
     origins: [{ entity_id: "automation.feuchte", name: "Klima – Feuchte überwachen" }, { entity_id: "automation.fenster", name: "Klima – Fenster überwachen" },
       { entity_id: "automation.geraete", name: "Haushalt – Geräte melden" }, { entity_id: "automation.sicherung", name: "Server – Sicherung" },
       { entity_id: "automation.waschmaschine", name: "Haushalt – Waschmaschine" }, { entity_id: "automation.wasser", name: "Sicherheit – Wasser" }],
-    options: { guide_dismissed: true },
+    options: { guide_dismissed: true, lights: ["light.flur", "light.kueche", "switch.stehlampe"], lights_always: ["switch.stehlampe"] },
   };
 
   const scan: ScanResult = {
@@ -303,7 +330,8 @@ const germanExample = (): Example => {
     "automation.wasser": sends({ titles: ["Wassermelder Keller"], seen_titles: ["Wassermelder Keller"] }),
   };
 
-  return { messages, overview, config, scan, sends: sent, sent: ["Handy Alex", "Tablet Küche"], nightEntity: "input_boolean.nachtruhe" };
+  return { messages, overview, config, scan, sends: sent, sent: ["Handy Alex", "Tablet Küche"], nightEntity: "input_boolean.nachtruhe",
+    lamps: { "light.flur": "Flur", "light.kueche": "Küche", "switch.stehlampe": "Stehlampe Wohnzimmer" } };
 };
 
 /** The same cases in English: neutral names, nothing of a real home. */
@@ -321,21 +349,24 @@ const englishExample = (): Example => {
     recent: [
       msg({ title: "Water leak basement", message: "Water detected on the floor. Please check right away.", state: "delivered", priority: 3,
         origin: "automation.water", origin_name: "Safety – Water", kind: "Water alarm", group: "Safety", since: ago(114), delivered_at: ago(114),
-        reason: "delivered",
+        ended_at: ago(114), reason: "delivered",
         events: [{ at: ago(114), kind: "alarm_light", source: "center", detail: "light.hallway, light.kitchen, light.basement" },
           { at: ago(113), kind: "snoozed", source: "phone", detail: "30 min" },
           { at: ago(111), kind: "forwarded", source: "page", detail: "What should I do?" }] }),
       msg({ title: "Window open", message: "The office window has been open for 20 min, it is 4 °C outside.", state: "delivered", priority: 2,
         origin: "automation.window", origin_name: "Climate – Watch windows", kind: "Window open", group: "Climate", since: ago(190),
-        delivered_at: ago(190), reason: "delivered",
+        delivered_at: ago(190), ended_at: ago(190), reason: "delivered",
         events: [{ at: ago(190), kind: "light", source: "center", detail: "light.hallway, light.kitchen" }] }),
       // what the appliance automation sent before; its entries in "new" were dismissed
       msg({ title: "Dryer done", message: "The laundry in the dryer is dry.", state: "delivered", priority: 1,
-        origin: "automation.appliances", origin_name: "Household – Appliances", since: ago(260), delivered_at: ago(260), reason: "delivered" }),
+        origin: "automation.appliances", origin_name: "Household – Appliances", since: ago(260), delivered_at: ago(260), ended_at: ago(260),
+        reason: "delivered" }),
       msg({ title: "Battery low: Bathroom window sensor", message: "The battery of the bathroom window sensor is at 9 %.", state: "delivered",
-        priority: 1, origin: "automation.appliances", origin_name: "Household – Appliances", since: ago(610), delivered_at: ago(610), reason: "delivered" }),
+        priority: 1, origin: "automation.appliances", origin_name: "Household – Appliances", since: ago(610), delivered_at: ago(610),
+        ended_at: ago(610), reason: "delivered" }),
       msg({ title: "Backup finished", message: "The nightly backup completed in 4 min.", state: "discarded", priority: 1,
-        origin: "automation.backup", origin_name: "Server – Backup", kind: "Backup", group: "Server", since: ago(1130), reason: "discarded by rule" }),
+        origin: "automation.backup", origin_name: "Server – Backup", kind: "Backup", group: "Server", since: ago(1130), ended_at: ago(1130),
+        reason: "discarded by rule", generation: 2 }),
     ],
   };
 
@@ -377,7 +408,7 @@ const englishExample = (): Example => {
     origins: [{ entity_id: "automation.appliances", name: "Household – Appliances" }, { entity_id: "automation.backup", name: "Server – Backup" },
       { entity_id: "automation.humidity", name: "Climate – Watch humidity" }, { entity_id: "automation.washing_machine", name: "Household – Washing machine" },
       { entity_id: "automation.water", name: "Safety – Water" }, { entity_id: "automation.window", name: "Climate – Watch windows" }],
-    options: { guide_dismissed: true },
+    options: { guide_dismissed: true, lights: ["light.hallway", "light.kitchen", "switch.floor_lamp"], lights_always: ["switch.floor_lamp"] },
   };
 
   const found = (o: Partial<ScanResult["found"][number]>) => scanItem({ entity_id: "automation.humidity", name: "Climate – Watch humidity",
@@ -417,15 +448,36 @@ const englishExample = (): Example => {
     "automation.water": sends({ titles: ["Water leak basement"], seen_titles: ["Water leak basement"] }),
   };
 
-  return { messages, overview, config, scan, sends: sent, sent: ["Alex's phone", "Kitchen tablet"], nightEntity: "input_boolean.night_mode" };
+  return { messages, overview, config, scan, sends: sent, sent: ["Alex's phone", "Kitchen tablet"], nightEntity: "input_boolean.night_mode",
+    lamps: { "light.hallway": "Hallway", "light.kitchen": "Kitchen", "switch.floor_lamp": "Floor lamp living room" } };
 };
 
-const { messages, overview, config, scan, sends: sentBy, sent, nightEntity } = en ? englishExample() : germanExample();
+const { messages, overview, config, scan, sends: sentBy, sent, nightEntity, lamps } = en ? englishExample() : germanExample();
 
 // ?push=…: the address a tapped push opens, with the id of an example message (see above)
 const push = params.get("push");
-// the history store: empty, except for the earlier generations of the message a tapped push shows
-const older: MessageEntry[] = [];
+// the history store: messages that ended a day and more ago, and the earlier generations of the message a tapped push shows
+const older: MessageEntry[] = en ? [
+  msg({ title: "Waste collection tomorrow", message: "Paper bin goes out tonight.", state: "delivered", priority: 1,
+    origin: "automation.waste_collection", origin_name: "Household – Waste collection", kind: "Waste collection", since: ago(1500),
+    delivered_at: ago(1500), ended_at: ago(1500), reason: "delivered" }),
+  msg({ title: "Humidity high: Kitchen", message: "Humidity in the kitchen above 70 % for 30 min.", state: "delivered", priority: 1,
+    origin: "automation.humidity", origin_name: "Climate – Watch humidity", kind: "Humidity", group: "Climate", since: ago(3300),
+    delivered_at: ago(2890), ended_at: ago(2890), reason: "delivered" }),
+  msg({ title: "Backup finished", message: "The nightly backup completed in 5 min.", state: "discarded", priority: 1,
+    origin: "automation.backup", origin_name: "Server – Backup", kind: "Backup", group: "Server", since: ago(4410), ended_at: ago(4410),
+    reason: "discarded by rule" }),
+] : [
+  msg({ title: "Müllabfuhr morgen", message: "Die Papiertonne muss heute Abend raus.", state: "delivered", priority: 1,
+    origin: "automation.muellabfuhr", origin_name: "Haushalt – Müllabfuhr", kind: "Müllabfuhr", since: ago(1500),
+    delivered_at: ago(1500), ended_at: ago(1500), reason: "zugestellt" }),
+  msg({ title: "Feuchte hoch: Küche", message: "Luftfeuchte in der Küche seit 30 min über 70 %.", state: "delivered", priority: 1,
+    origin: "automation.feuchte", origin_name: "Klima – Feuchte überwachen", kind: "Feuchte", group: "Klima", since: ago(3300),
+    delivered_at: ago(2890), ended_at: ago(2890), reason: "zugestellt" }),
+  msg({ title: "Sicherung abgeschlossen", message: "Die nächtliche Sicherung ist in 5 min durchgelaufen.", state: "discarded", priority: 1,
+    origin: "automation.sicherung", origin_name: "Server – Sicherung", kind: "Sicherung", group: "Server", since: ago(4410), ended_at: ago(4410),
+    reason: "verworfen durch Regel" }),
+];
 if (push === "message" || push === "classify" || push === "missing") {
   const target = push === "message" ? messages.recent[1] : messages.open[1];
   if (push === "message") {
@@ -538,13 +590,27 @@ const saveKind = (m: Record<string, unknown>) => {
   return id;
 };
 
+/** A toggle created in the rule dialog, as Home Assistant does it: an id from the name, an entity named after it. */
+const createSwitch = (name: string) => {
+  const base = name.toLowerCase().replace(/ä/g, "a").replace(/ö/g, "o").replace(/ü/g, "u").replace(/ß/g, "ss")
+    .replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "") || "toggle";
+  let id = base;
+  for (let n = 2; hass.states[`input_boolean.${id}`]; n++) id = `${base}_${n}`;
+  hass.states[`input_boolean.${id}`] = { entity_id: `input_boolean.${id}`, state: "off", attributes: { friendly_name: name } };
+  return { id, name };
+};
+
 const hass = {
   language: en ? "en" : "de",
-  states: { [nightEntity]: { entity_id: nightEntity, state: "on", attributes: {} } },
+  states: {
+    [nightEntity]: { entity_id: nightEntity, state: "on", attributes: {} },
+    ...Object.fromEntries(Object.entries(lamps).map(([id, name]) => [id, { entity_id: id, state: "on", attributes: { friendly_name: name } }])),
+  } as Record<string, { entity_id: string; state: string; attributes: Record<string, unknown> }>,
   user: { is_admin: true, name: "Alex" },
   connection: { subscribeMessage: async (cb: () => void) => { listeners.push(cb); return async () => undefined; } },
   callService: async () => undefined,
   callWS: async (m: Record<string, unknown>) => {
+    if (m.type === "input_boolean/create") return createSwitch(String(m.name));
     switch (String(m.type).split("/")[1]) {
       case "overview": return overview;
       case "messages": return messages;
@@ -629,21 +695,55 @@ async function kindDemo(panel: HTMLElement & { updateComplete: Promise<unknown>;
   if (demo === "duplicate") await editor._save();
 }
 
-// For screenshots: ?tab=open selects a tab, ?unfold=1 unfolds the first message row, ?kind=… opens the kind dialog.
-const tab = params.get("tab") ?? (params.get("kind") ? "kinds" : null);
+interface Inside {
+  updateComplete: Promise<unknown>;
+  shadowRoot: ShadowRoot | null;
+}
+
+/** For screenshots: the dialog of a new delivery rule with its help on modes (?rule=…). */
+async function ruleDemo(panel: HTMLElement & Inside & { _openRuleEditor(): void }, demo: string) {
+  panel._openRuleEditor();
+  await panel.updateComplete;
+  const editor = panel.shadowRoot?.querySelector("message-center-editor") as unknown as Inside | null;
+  if (!editor) return;
+  await editor.updateComplete;
+  const help = editor.shadowRoot?.querySelector("message-center-mode-help") as unknown as
+    (Inside & { _open(): void; _create(): Promise<void> }) | null;
+  if (!help) return;
+  await help.updateComplete;
+  if (demo === "help") {
+    const box = help.shadowRoot?.querySelector("details");
+    if (box) box.open = true;
+  }
+  if (demo === "name" || demo === "created") {
+    help._open();
+    await help.updateComplete;
+  }
+  if (demo === "created") await help._create();
+}
+
+// For screenshots: ?tab=open selects a tab, ?unfold=1 unfolds the first message row, ?kind=… opens the kind dialog,
+// ?rule=… the rule dialog, ?dirty=1 changes a setting without saving it, ?order=oldest sorts the history oldest first.
+const tab = params.get("tab") ?? (params.get("kind") ? "kinds" : params.get("rule") ? "rules" : null);
 if (tab) {
   document.querySelectorAll("message-center-panel").forEach((el) => {
-    const panel = el as unknown as HTMLElement & { updateComplete: Promise<unknown>; _select(t: string): Promise<void>; _openRows: Set<string>;
-      _openKindEditor(source: unknown): void };
+    const panel = el as unknown as HTMLElement & Inside & { _select(t: string): Promise<void>; _openRows: Set<string>;
+      _openKindEditor(source: unknown): void; _openRuleEditor(): void; _settings?: Record<string, unknown>; _order: string; _config?: unknown };
     void panel.updateComplete.then(async () => {
+      // the page loads its data first, as it does in Home Assistant before anyone can click
+      for (let i = 0; i < 100 && !panel._config; i++) await pause(10);
+      if (params.get("order")) panel._order = params.get("order") === "oldest" ? "oldest" : "newest";
       await panel._select(tab);
       if (params.get("scan")) await (panel as unknown as { _runScan(): Promise<void> })._runScan();
       if (params.get("unfold")) panel._openRows = new Set([rowKey(tab === "open" ? messages.open[0] : messages.recent[0])]);
+      if (params.get("dirty") && panel._settings) panel._settings = { ...panel._settings, pulse_ms: 700 };
       const demo = params.get("kind");
-      if (demo) {
+      const rule = params.get("rule");
+      if (demo || rule) {
         // room for the dialog below the page
         panel.style.minHeight = "1500px";
-        await kindDemo(panel, demo);
+        if (demo) await kindDemo(panel, demo);
+        if (rule) await ruleDemo(panel, rule);
       }
     });
   });

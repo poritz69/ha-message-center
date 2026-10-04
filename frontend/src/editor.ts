@@ -74,6 +74,8 @@ export class MessageCenterEditor extends LitElement {
   @property({ attribute: false }) public onSave!: (data: FormData) => Promise<void>;
   /** Optional hook to adjust the data after a change, e.g. to prefill defaults. */
   @property({ attribute: false }) public onChange?: (next: FormData, prev: FormData) => FormData;
+  /** Optional content above the fields; `update` changes the dialog's data like an input does. */
+  @property({ attribute: false }) public extra?: (update: (change: (data: FormData) => FormData) => void) => unknown;
   @state() private _error = "";
   @state() private _busy = false;
   @state() private _data: FormData = {};
@@ -108,6 +110,7 @@ export class MessageCenterEditor extends LitElement {
   render() {
     const body = formFields(this.hass, this.fields, this._data, this.labels, this.helpers, (next) => this._set(next));
     const content = html`
+      ${this.extra ? this.extra((change) => this._set(change(this._data))) : nothing}
       ${body}
       ${this._error ? html`<div class="error">${this._error}</div>` : nothing}
     `;

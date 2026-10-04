@@ -141,6 +141,50 @@ def test_readme_notify_contract_names_only_real_error_keys() -> None:
     assert "`not_ready`" in section
 
 
+def test_guides_say_where_the_action_is_found() -> None:
+    """Both guides tell where the action of Message Center is in the automation editor.
+
+    New users look for it under *Add action*; the search there finds it by
+    its name. It also finds the actions of the integration, which Home
+    Assistant names "Message Center: Send" and so on, so both guides say
+    which entry is meant. The guide in German, the README in English.
+    """
+    guide = (ROOT / "docs" / "bedienhilfe.md").read_text()
+    assert (
+        "Im Automationseditor bei *Aktion hinzufügen* oben nach "
+        "„Message Center“ suchen. Gemeint ist der Eintrag, der nur "
+        "„Message Center“ heißt, nicht „Message Center: Senden“." in guide
+    )
+    readme = (ROOT / "README.md").read_text()
+    assert (
+        "In the automation editor, search for “Message Center” at the top of "
+        "*Add action*. Pick the entry called just “Message Center”, not "
+        "“Message Center: Send”." in readme
+    )
+
+
+def test_guides_name_the_dashboard_path_of_an_own_dashboard() -> None:
+    """The way to put a mode toggle on a dashboard is the one of an own dashboard.
+
+    Home Assistant's own overview has "Edit overview" and no "Add card", so
+    the guide limits the path to a dashboard of one's own, as the page does.
+    """
+    guide = (ROOT / "docs" / "bedienhilfe.md").read_text()
+    line = next(
+        line for line in guide.splitlines() if "**Ins Dashboard holen:**" in line
+    )
+    assert "eigenes Dashboard" in line
+    assert "„Dashboard bearbeiten“ → „Karte hinzufügen“ → „Nach Entität“" in line
+
+
+def test_readme_removal_names_the_created_toggles() -> None:
+    """Toggles created with *Create toggle* are helpers that stay after removal."""
+    readme = (ROOT / "README.md").read_text()
+    section = readme.split("## Removal", 1)[1].split("\n## ", 1)[0]
+    assert "*Create toggle*" in section
+    assert "Settings → Devices & services → Helpers" in section
+
+
 def test_versions_agree() -> None:
     """Manifest, page package and lock file carry the version of the changelog head.
 

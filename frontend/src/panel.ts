@@ -1,5 +1,6 @@
 import { LitElement, css, html, nothing } from "lit";
 import { property, state } from "lit/decorators.js";
+import { keyed } from "lit/directives/keyed.js";
 import {
   deleteEntry, dismissUnknown, ensureHaElements, fetchConfig, fetchHistory, fetchMessages, fetchOverview,
   alarmOff, messageAction, saveEntry, saveOptions, scanHouse, sendTest, setRecipients, subscribe,
@@ -12,9 +13,14 @@ import { logoMark } from "./brand";
 import "./editor";
 import "./flow";
 import "./kind-editor";
-import { conditionLabel, forOrigin, type KindSource } from "./kind-logic";
+import "./mode-help";
+import { conditionLabel, fill, forOrigin, type KindSource } from "./kind-logic";
 import { readDeepLink, resolveDeepLink, rowKey, withoutDeepLink } from "./deep-link";
+import { dateTime, endedAt, readOrder, sortByEnd, storeOrder, type HistoryOrder } from "./history";
 import { icon } from "./icons";
+import { ruleWithSwitch } from "./rule-logic";
+import { scanNote } from "./scan-logic";
+import { lightRows, optionsPayload, settingsChanged, withAlways, withDefaults, withLight, withoutLight, type LightRow } from "./settings-logic";
 import type { Field, FormData } from "./editor";
 
 const TABS: Tab[] = ["overview", "open", "history", "kinds", "rules", "recipients", "settings"];
@@ -30,6 +36,8 @@ interface Editor {
   data: FormData;
   onSave: (data: FormData) => Promise<void>;
   onChange?: (next: FormData, prev: FormData) => FormData;
+  /** Content above the fields; `update` changes the dialog's data (see editor.ts). */
+  extra?: (update: (change: (data: FormData) => FormData) => void) => unknown;
 }
 
 export class MessageCenterPanel extends LitElement {
@@ -47,9 +55,13 @@ export class MessageCenterPanel extends LitElement {
   @state() private _filterGroup = "";
   @state() private _filterKind = "";
   @state() private _search = "";
+  /** Order of the history's tables, remembered in this browser. */
+  @state() private _order: HistoryOrder = readOrder();
   /** Working copy of the options on the settings tab; the page owns it, so refreshes never reset it. */
   @state() private _settings?: Options;
   @state() private _settingsNote = "";
+  /** Counts the lamps added; a new count gives a new, empty picker (Home Assistant's keeps what was picked). */
+  @state() private _lampAddRound = 0;
   @state() private _testNote = "";
   /** A short note above the tab, such as for a link to a message that is gone; cleared on the next tab. */
   @state() private _notice = "";
@@ -131,7 +143,10 @@ export class MessageCenterPanel extends LitElement {
     .kpi.zero .value { color: var(--secondary-text-color); }
     .pair { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 0 12px; align-items: start; }
     /* Messages: a compact table, one line per message; a click unfolds text, reason, events and buttons. */
-    .mtable .thead, .mtable summary { display: grid; grid-template-columns: 34px 128px minmax(0, 1fr) minmax(0, 240px) 92px 18px;
+    .mtable { --mc-time: 92px; }
+    /* the history shows date and time of the end, always */
+    .mtable.ended { --mc-time: 118px; }
+    .mtable .thead, .mtable summary { display: grid; grid-template-columns: 34px 128px minmax(0, 1fr) minmax(0, 240px) var(--mc-time) 18px;
       column-gap: 12px; align-items: center; padding: 0 12px 0 14px; }
     .mtable .thead { height: 32px; font-size: 12px; color: var(--secondary-text-color); border-bottom: 1px solid var(--divider-color); }
     .mtable details { border-top: 1px solid var(--divider-color); --st: var(--secondary-text-color); --lvl: var(--primary-color); --lvl-on: #fff; }
@@ -270,10 +285,28 @@ export class MessageCenterPanel extends LitElement {
     .level .chip { flex: none; margin-top: 2px; }
     .level .name { font-weight: 500; }
     .level .effect { color: var(--secondary-text-color); font-size: 13px; margin-top: 2px; }
-    .level .body { flex: 1 1 14em; min-width: 0; }
+    /* the text takes what is left, so "Save" stands where "Test" stood, also on a phone */
+    .level .body { flex: 1 1 0; min-width: 0; }
     .level .body ha-form { display: block; margin-top: 8px; }
-    .level { flex-wrap: wrap; }
+    .level .actions { flex: none; }
     .form { padding: 0 16px 16px; }
+    /* Lamps of the light pulse: one list, each lamp with its own "also when off" and a button to remove it. */
+    .lamps { padding: 4px 0 6px; }
+    .lamps-head { font-weight: 500; }
+    .lamps-help { margin: 2px 0 8px; font-size: 13px; line-height: 1.4; color: var(--secondary-text-color); }
+    .lamps ul { margin: 0 0 6px; padding: 0; list-style: none; border: 1px solid var(--divider-color); border-radius: 8px; }
+    .lamp { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; min-height: 48px; padding: 4px 4px 4px 12px;
+      border-top: 1px solid var(--divider-color); }
+    .lamp:first-child { border-top: 0; }
+    .lamp-name { flex: 1 1 12em; min-width: 0; }
+    .lamp-name .id { display: block; font-size: 12px; color: var(--secondary-text-color); overflow-wrap: anywhere; }
+    .lamp-name .missing { color: var(--mc-warn); }
+    .lamp-always { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; white-space: nowrap; }
+    .lamp-remove { display: inline-grid; place-items: center; width: 36px; height: 36px; margin-left: auto; padding: 0; border: 0; border-radius: 50%;
+      background: none; color: var(--secondary-text-color); cursor: pointer; }
+    .lamp-remove:hover { background: color-mix(in srgb, var(--primary-text-color) 8%, transparent); color: var(--mc-bad); }
+    .lamps-empty { margin: 0 0 6px; padding: 10px 12px; border: 1px dashed var(--divider-color); border-radius: 8px;
+      font-size: 13px; color: var(--secondary-text-color); }
     .card-actions { display: flex; gap: 8px; align-items: center; justify-content: flex-end; padding: 8px 16px 12px; }
     .note { color: var(--success-color, #43a047); font-size: 13px; }
     .guide ol { margin: 0; padding: 0 16px 8px 36px; }
@@ -322,6 +355,8 @@ export class MessageCenterPanel extends LitElement {
     this._lang = this.hass?.language ?? "en";
     this._t = makeT(this._lang);
     await ensureHaElements();
+    // the lamp list uses HA's switch, which comes with the forms: show it once it is there
+    if (!customElements.get("ha-switch")) void customElements.whenDefined("ha-switch").then(() => this.requestUpdate());
     await this._refresh();
     await this._followLink();
     try {
@@ -449,7 +484,7 @@ export class MessageCenterPanel extends LitElement {
       </main>
       ${this._editor ? html`<message-center-editor .hass=${this.hass} .t=${t} .heading=${this._editor.heading}
         .fields=${this._editor.fields} .labels=${this._editor.labels} .helpers=${this._editor.helpers} .data=${this._editor.data}
-        .onSave=${this._editor.onSave} .onChange=${this._editor.onChange}
+        .onSave=${this._editor.onSave} .onChange=${this._editor.onChange} .extra=${this._editor.extra}
         @editor-closed=${() => { this._editor = undefined; if (this._scan && this._tab === "kinds") void this._runScan(); }}></message-center-editor>` : nothing}
       ${this._kindSource ? html`<message-center-kind-editor .hass=${this.hass} .t=${t} .config=${this._config}
         .unknown=${this._overview?.unknown ?? []} .source=${this._kindSource}
@@ -465,23 +500,10 @@ export class MessageCenterPanel extends LitElement {
       try { this._history = (await fetchHistory(this.hass)).history; } catch { /* shown on refresh */ }
     }
     if (tab === "settings") {
-      this._settings = this._optionsWithDefaults();
+      // a fresh working copy of the stored options; before they are loaded, the tab makes it once they are
+      this._settings = this._config ? withDefaults(this._config.options) : undefined;
       this._settingsNote = "";
     }
-  }
-
-  private _optionsWithDefaults(): Options {
-    const o = this._config?.options ?? {};
-    return { history_days: o.history_days ?? 30, sidebar: o.sidebar ?? true, hide_titles: o.hide_titles ?? false,
-      allow_alarm: o.allow_alarm ?? false, lights: o.lights ?? [], pulse_ms: o.pulse_ms ?? 500, light_spacing: o.light_spacing ?? 0,
-      alarm_lights: o.alarm_lights ?? [], alarm_interval_ms: o.alarm_interval_ms ?? 1000, alarm_max_seconds: o.alarm_max_seconds ?? 300,
-      alarm_test_seconds: o.alarm_test_seconds ?? 5, silent_repeat: o.silent_repeat ?? false,
-      alarm_channel: o.alarm_channel ?? "alarm_stream", alarm_tts: o.alarm_tts ?? false,
-      button_snooze: o.button_snooze ?? true, tap_target: o.tap_target ?? "home",
-      button_forward: o.button_forward ?? true, snooze_minutes: o.snooze_minutes ?? 30,
-      snooze_minutes_2: o.snooze_minutes_2 ?? 0, snooze_input: o.snooze_input ?? false,
-      lights_always: o.lights_always ?? [], forward_script: o.forward_script ?? "",
-      effect_script_1: o.effect_script_1 ?? "", effect_script_2: o.effect_script_2 ?? "", effect_script_3: o.effect_script_3 ?? "" };
   }
 
   /** "1 Meldung" / "3 Meldungen". */
@@ -596,8 +618,8 @@ export class MessageCenterPanel extends LitElement {
       (!this._filterGroup || (this._filterGroup === "-" ? !e.group : e.group === this._filterGroup)) &&
       (!this._filterKind || (this._filterKind === "-" ? !e.kind : e.kind === this._filterKind)) &&
       (!this._search || (e.title + " " + e.message + " " + (e.origin_name ?? "")).toLowerCase().includes(this._search.toLowerCase()));
-    const r = recent.filter(filter);
-    const o = older.filter(filter);
+    const r = sortByEnd(recent.filter(filter), this._order);
+    const o = sortByEnd(older.filter(filter), this._order);
     return html`
       ${this._intro("intro_history")}
       <div class="toolbar">
@@ -612,6 +634,10 @@ export class MessageCenterPanel extends LitElement {
           ${kinds.map((k) => html`<option value=${k.name} ?selected=${this._filterKind === k.name}>${k.name}</option>`)}
         </select>
         <input type="search" placeholder=${t("search")} .value=${this._search} @input=${(e: Event) => { this._search = (e.target as HTMLInputElement).value; }} />
+        <select title=${t("order")} aria-label=${t("order")} @change=${(e: Event) => this._setOrder((e.target as HTMLSelectElement).value as HistoryOrder)}>
+          <option value="newest" ?selected=${this._order === "newest"}>${t("order_newest")}</option>
+          <option value="oldest" ?selected=${this._order === "oldest"}>${t("order_oldest")}</option>
+        </select>
       </div>
       <ha-card .header=${t("recent")}>
         ${r.length === 0 ? html`<div class="empty">${t("history_empty")}</div>` : this._renderTable(r, false)}
@@ -620,12 +646,22 @@ export class MessageCenterPanel extends LitElement {
     `;
   }
 
-  /** The messages as a compact table; `open` adds the buttons of open messages. */
+  /** Newest or oldest first in both tables of the history; the browser keeps the choice. */
+  private _setOrder(order: HistoryOrder) {
+    this._order = order === "oldest" ? "oldest" : "newest";
+    storeOrder(this._order);
+  }
+
+  /**
+   * The messages as a compact table; `open` adds the buttons of open messages.
+   * The time column says since when an open message waits ("Since"), and when
+   * an ended one ended ("Time", always with the date).
+   */
   private _renderTable(entries: MessageEntry[], open: boolean) {
     const t = this._t;
-    return html`<div class="mtable">
+    return html`<div class="mtable ${open ? "" : "ended"}">
       <div class="thead"><span>${t("level_word")}</span><span>${t("state")}</span><span>${t("message_col")}</span>
-        <span>${t("origin")}</span><span class="time">${t("since_col")}</span><span></span></div>
+        <span>${t("origin")}</span><span class="time">${t(open ? "since_col" : "time_col")}</span><span></span></div>
       ${entries.map((e) => this._renderMessage(e, open))}
     </div>`;
   }
@@ -654,7 +690,7 @@ export class MessageCenterPanel extends LitElement {
         <span class="stc" title=${t(st)}>${icon(stIcon, 18)}<span>${t(st)}</span></span>
         <span class="line"><span class="title">${e.title}</span>${e.count > 1 ? html`<span class="cnt">${e.count}×</span>` : nothing}<span class="snip">${e.message}</span></span>
         <span class="org">${origin}</span>
-        <span class="time">${this._time(e.since)}</span>
+        <span class="time">${open ? this._time(e.since) : dateTime(endedAt(e), this.hass?.language ?? "en")}</span>
         <span class="chev">${icon("chev", 18)}</span>
       </summary>
       ${unfolded ? html`<div class="more">
@@ -811,21 +847,23 @@ export class MessageCenterPanel extends LitElement {
           src.blueprint ? html` · ${t("scan_blueprint").replace("{name}", src.blueprint)}` : nothing}</span>
         ${src.edit_url ? html`<a href=${src.edit_url}>${t("scan_open_editor")}</a>` : nothing}
       </div>
-      ${items.map((i) => html`<div class="row">
+      ${items.map((i) => {
+        const note = scanNote(i);
+        return html`<div class="row">
         <div class="body">
           <div class="title"><span class="chip scan-${i.status}">${t(`scan_${i.status}`)}</span>${i.title ?? i.first_line ?? "–"}${
             i.title ? nothing : html` <span class="chip">${t("scan_no_title")}${i.first_line ? html`, ${t("scan_first_line")}` : nothing}</span>`}</div>
           <div class="meta">${t("scan_target")}: <code>${i.target}</code>${i.line ? html` · ${t("scan_line")} ${i.line}` : nothing}</div>
-          ${i.status === "direct" ? html`<div class="meta scan-todo">${t("scan_change_target")}${
-            i.title ? "" : i.suggestion?.mode === "exact" ? ` ${t("scan_change_title").replace("{title}", i.suggestion.value)}` : ` ${t("scan_change_title_free")}`}.</div>` : nothing}
-          ${i.status !== "persistent" && !i.suggestion ? html`<div class="meta">${t(i.title ? "scan_title_computed" : "scan_title_own")}.</div>` : nothing}
+          ${i.status === "direct" ? html`<div class="meta scan-todo">${t("scan_change_target")}.</div>` : nothing}
+          ${note ? html`<div class="meta">${fill(t(note.key), { name: note.name ?? "" })}</div>` : nothing}
           ${i.source === "script" && i.status !== "persistent" && !i.kind ? html`<div class="meta">${t("scan_script_origin")}</div>` : nothing}
         </div>
         <div class="actions">${i.kind
           ? html`<span class="chip state-delivered">${t("scan_kind")}: ${i.kind}</span>`
           : i.status === "persistent" ? nothing
           : html`<ha-button appearance="plain" @click=${() => this._kindFromScan(i)}>${t("add_kind")}</ha-button>`}</div>
-      </div>`)}`;
+      </div>`;
+      })}`;
   }
 
   /** Open the kind dialog for a found place: its origin and the suggested condition. */
@@ -1002,6 +1040,10 @@ export class MessageCenterPanel extends LitElement {
       heading: rule ? `${t("edit")}: ${rule.name}` : t("add_rule"),
       fields: fieldsFor(data.entity_id, data.state), labels, helpers: { state: t("rule_state_helper") },
       data,
+      // what a mode is, and a toggle created here is chosen for the rule at once
+      extra: (update) => html`<message-center-mode-help .hass=${this.hass} .t=${t}
+        @switch-created=${(e: CustomEvent<{ entity_id: string; name: string }>) =>
+          update((d) => ruleWithSwitch(d, e.detail.entity_id, e.detail.name))}></message-center-mode-help>`,
       onChange: (next, prev) => {
         if (next.entity_id !== prev.entity_id && this._editor) {
           // a new entity: offer its states and preselect the current one
@@ -1077,13 +1119,13 @@ export class MessageCenterPanel extends LitElement {
   private _renderSettings() {
     const t = this._t;
     if (!this._config) return html`<div class="empty">${t("loading")}</div>`;
-    const data = this._settings ?? (this._settings = this._optionsWithDefaults());
+    const data = this._settings ?? (this._settings = withDefaults(this._config.options));
     const onChange = (e: CustomEvent) => { this._settings = { ...data, ...(e.detail.value as Options) }; this._settingsNote = ""; };
-    const lightsField: Field[] = [
-      { name: "lights", selector: { entity: { domain: ["light", "switch"], multiple: true } } },
+    // something not saved yet: each "Test" would test the stored settings, so "Save" stands in its place
+    const unsaved = settingsChanged(data, this._config.options);
+    const pulseFields: Field[] = [
       { name: "pulse_ms", required: true, selector: { number: { min: 100, max: 10000, step: 50, mode: "box", unit_of_measurement: "ms" } } },
       { name: "light_spacing", required: true, selector: { number: { min: 0, max: 600, mode: "box", unit_of_measurement: "s" } } },
-      { name: "lights_always", selector: { entity: { domain: ["light", "switch"], multiple: true } } },
     ];
     const alarmFields: Field[] = [
       { name: "alarm_lights", selector: { entity: { domain: ["light", "switch"], multiple: true } } },
@@ -1122,16 +1164,19 @@ export class MessageCenterPanel extends LitElement {
         <ha-form .hass=${this.hass} .schema=${scriptField(n)} .data=${data}
           .computeLabel=${(f: Field) => t(f.name)} .computeHelper=${() => t("effect_script_helper")} @value-changed=${onChange}></ha-form>
       </div>
-      <div class="actions"><ha-button appearance="outlined" @click=${() => this._sendTest(n)}>${t("test")}</ha-button></div>
+      <div class="actions">${unsaved
+        ? html`<ha-button @click=${this._saveSettings}>${t("save")}</ha-button>`
+        : html`<ha-button appearance="outlined" @click=${() => this._sendTest(n)}>${t("test")}</ha-button>`}</div>
     </div>`;
-    const helpers: Record<string, string> = { lights: t("lights_helper"), light_spacing: t("light_spacing_helper"), lights_always: t("lights_always_helper") };
+    const helpers: Record<string, string> = { light_spacing: t("light_spacing_helper") };
     return html`
       ${this._intro("intro_settings")}
       <ha-card .header=${t("levels_title")}>
         <div class="empty">${t("test_hint")}${this._testNote ? html` <span class="note">${this._testNote}</span>` : nothing}</div>
         ${level(1)}${level(2)}
         <div class="form">
-          <ha-form .hass=${this.hass} .schema=${lightsField} .data=${data}
+          ${this._renderLights(data)}
+          <ha-form .hass=${this.hass} .schema=${pulseFields} .data=${data}
             .computeLabel=${(f: Field) => t(f.name)} .computeHelper=${(f: Field) => helpers[f.name]}
             @value-changed=${onChange}></ha-form>
         </div>
@@ -1160,6 +1205,51 @@ export class MessageCenterPanel extends LitElement {
           <ha-button @click=${this._saveSettings}>${t("save")}</ha-button>
         </div>
       </ha-card>`;
+  }
+
+  /**
+   * The lamps and switches of the light pulse as one list: each with its own
+   * switch "also when off" and a button to remove it, and a picker below to
+   * add one. Saved as `lights` and the part of them in `lights_always`.
+   */
+  private _renderLights(data: Options) {
+    const t = this._t;
+    const rows = lightRows(data);
+    const change = (edit: (o: Options) => Options) => {
+      this._settings = edit(this._settings ?? data);
+      this._settingsNote = "";
+    };
+    const add: Field[] = [{ name: "light_add", selector: { entity: { domain: ["light", "switch"], exclude_entities: rows.map((r) => r.entity_id) } } }];
+    return html`<div class="lamps">
+      <div class="lamps-head">${t("lights")}</div>
+      <div class="lamps-help">${t("lights_helper")}</div>
+      ${rows.length ? html`<ul>${rows.map((r) => this._renderLight(r, change))}</ul>` : html`<div class="lamps-empty">${t("lights_empty")}</div>`}
+      ${keyed(this._lampAddRound, html`<ha-form .hass=${this.hass} .schema=${add} .data=${{ light_add: "" }} .computeLabel=${() => t("light_add")}
+        @value-changed=${(e: CustomEvent) => {
+          const id = (e.detail.value as { light_add?: string } | undefined)?.light_add;
+          if (!id) return;
+          change((o) => withLight(o, id));
+          // the entity picker keeps the lamp it shows; a new one is empty again
+          this._lampAddRound++;
+        }}></ha-form>`)}
+    </div>`;
+  }
+
+  private _renderLight(r: LightRow, change: (edit: (o: Options) => Options) => void) {
+    const t = this._t;
+    const st = this.hass?.states?.[r.entity_id];
+    const name = typeof st?.attributes?.friendly_name === "string" && st.attributes.friendly_name ? st.attributes.friendly_name : r.entity_id;
+    const setAlways = (on: boolean) => change((o) => withAlways(o, r.entity_id, on));
+    // HA's switch once the page has it (it comes with the forms), a plain checkbox until then
+    const toggle = customElements.get("ha-switch")
+      ? html`<ha-switch .checked=${r.always} @change=${(e: Event) => setAlways((e.target as HTMLInputElement).checked)}></ha-switch>`
+      : html`<input type="checkbox" .checked=${r.always} @change=${(e: Event) => setAlways((e.target as HTMLInputElement).checked)} />`;
+    return html`<li class="lamp">
+      <div class="lamp-name">${name}<span class="id">${r.entity_id}${st ? nothing : html` · <span class="missing">${t("light_missing")}</span>`}</span></div>
+      <label class="lamp-always" title=${t("light_always_helper")}>${toggle}<span>${t("light_always")}</span></label>
+      <button class="lamp-remove" title=${t("light_remove")} aria-label=${t("light_remove")}
+        @click=${() => change((o) => withoutLight(o, r.entity_id))}>${icon("trash", 18)}</button>
+    </li>`;
   }
 
   private _alarmOff = async () => {
@@ -1200,20 +1290,10 @@ export class MessageCenterPanel extends LitElement {
     const s = this._settings;
     if (!s) return;
     try {
-      const res = await saveOptions(this.hass, {
-        guide_dismissed: this._config?.options.guide_dismissed ?? false,
-        history_days: Number(s.history_days ?? 30), sidebar: s.sidebar !== false, hide_titles: !!s.hide_titles,
-        allow_alarm: !!s.allow_alarm, lights: s.lights ?? [], pulse_ms: Number(s.pulse_ms ?? 500), light_spacing: Number(s.light_spacing ?? 0),
-        alarm_lights: s.alarm_lights ?? [], alarm_interval_ms: Number(s.alarm_interval_ms ?? 1000),
-        alarm_max_seconds: Number(s.alarm_max_seconds ?? 300), alarm_test_seconds: Number(s.alarm_test_seconds ?? 5),
-        silent_repeat: !!s.silent_repeat, alarm_channel: String(s.alarm_channel ?? "alarm_stream"), alarm_tts: !!s.alarm_tts,
-        button_snooze: s.button_snooze !== false, tap_target: s.tap_target === "center" ? "center" : "home",
-        button_forward: s.button_forward !== false, snooze_minutes: Number(s.snooze_minutes ?? 30),
-        snooze_minutes_2: Number(s.snooze_minutes_2 ?? 0), snooze_input: !!s.snooze_input,
-        lights_always: s.lights_always ?? [], forward_script: s.forward_script || null,
-        effect_script_1: s.effect_script_1 || null, effect_script_2: s.effect_script_2 || null, effect_script_3: s.effect_script_3 || null,
-      });
-      this._settings = { ...this._optionsWithDefaults(), ...res.options };
+      const res = await saveOptions(this.hass, optionsPayload(s, this._config?.options.guide_dismissed ?? false));
+      // the stored state is known now: the test buttons come back without waiting for the refresh
+      if (this._config) this._config = { ...this._config, options: res.options };
+      this._settings = withDefaults(res.options);
       this._settingsNote = this._t("saved");
       this._error = "";
     } catch (err) {
