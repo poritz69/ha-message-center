@@ -7,14 +7,14 @@ import { tables } from "../src/i18n";
 import { ruleWithSwitch, switchEntityId } from "../src/rule-logic";
 
 test("a created toggle has the entity id Home Assistant gives it", () => {
-  assert.equal(switchEntityId({ id: "nachtmodus", name: "Nachtmodus" }), "input_boolean.nachtmodus");
+  assert.equal(switchEntityId({ id: "nachtruhe", name: "Nachtruhe" }), "input_boolean.nachtruhe");
   assert.equal(switchEntityId({ id: "night_mode_2", name: "Night mode" }), "input_boolean.night_mode_2");
 });
 
 test("the rule takes the created toggle, the state on, and its name when it has none", () => {
   assert.deepEqual(
-    ruleWithSwitch({ name: "", entity_id: "", state: "off", effect_1: "hold", max_hours: 12 }, "input_boolean.nachtmodus", "Nachtmodus"),
-    { name: "Nachtmodus", entity_id: "input_boolean.nachtmodus", state: "on", effect_1: "hold", max_hours: 12 });
+    ruleWithSwitch({ name: "", entity_id: "", state: "off", effect_1: "hold", max_hours: 12 }, "input_boolean.nachtruhe", "Nachtruhe"),
+    { name: "Nachtruhe", entity_id: "input_boolean.nachtruhe", state: "on", effect_1: "hold", max_hours: 12 });
   // a name typed before stays
   assert.deepEqual(
     ruleWithSwitch({ name: "Ruhe", entity_id: "sun.sun", state: "below_horizon" }, "input_boolean.urlaub", "Urlaub"),
