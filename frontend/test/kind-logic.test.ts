@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import { makeT, tables } from "../src/i18n";
 import {
   appliesTo, conditionComplete, conditionLabel, counted, duplicateIn, duplicateOf, forOrigin, kindPayload, landsInNew, modeOptions,
-  possibleMessages, probeOf, startState, type Condition,
+  clashNote, possibleMessages, probeOf, startState, untitledClash, type Condition,
 } from "../src/kind-logic";
 import type { Kind, KindMatches, OriginMessages, ScanItem, UnknownItem } from "../src/types";
 
@@ -40,15 +40,15 @@ const kind = (o: Partial<Kind> = {}): Kind => ({
 });
 
 const om = (o: Partial<OriginMessages> = {}): OriginMessages => ({
-  source: "config", messages: [{ title: "Wäsche fertig", template: false, display: "Wäsche fertig" }],
+  source: "config", messages: [{ title: "Wäsche fertig", template: false, display: "Wäsche fertig", first_line: null }],
   seen_titles: [], multiple: false, any_allowed: true, ...o,
 });
 
 const several = om({
   messages: [
-    { title: "Fenster offen", template: false, display: "Fenster offen" },
-    { title: "Raum {{ raum }}: lüften", template: true, display: "Raum …: lüften" },
-    { title: null, template: false, display: "Raumklima" },
+    { title: "Fenster offen", template: false, display: "Fenster offen", first_line: null },
+    { title: "Raum {{ raum }}: lüften", template: true, display: "Raum …: lüften", first_line: null },
+    { title: null, template: false, display: "Raumklima", first_line: "Bitte lüften" },
   ],
   seen_titles: ["Raum Bad: lüften", "fenster offen"],
   multiple: true,
@@ -175,7 +175,7 @@ test("from the search: the suggestion of the found call", () => {
 
 test("editing a kind of an automation with one message puts it on all its messages, locked", () => {
   const sicherung = kind({ id: "k4", name: "Sicherung", origin: "automation.sicherung", title_mode: "prefix", title_value: "Sicherung" });
-  const one = om({ messages: [{ title: "Sicherung abgeschlossen", template: false, display: "Sicherung abgeschlossen" }] });
+  const one = om({ messages: [{ title: "Sicherung abgeschlossen", template: false, display: "Sicherung abgeschlossen", first_line: null }] });
   const s = startState({ from: "edit", kind: sicherung }, one, [sicherung]);
   // the old text waits in the condition for a switch back to another comparison; "any" does not use it
   assert.deepEqual(s.condition, cond("automation.sicherung", "any", "Sicherung"));
@@ -248,13 +248,14 @@ test("a new kind without a template starts with open fields", () => {
 
 // ----- possible messages, comparisons -------------------------------------------------
 
-test("the possible messages: fixed, computed with a placeholder, arrived", () => {
-  const list = possibleMessages(several);
-  assert.deepEqual(list.map((p) => [p.label, p.tag]), [
-    ["Fenster offen", "fixed"],
-    ["Raum …: lüften", "computed"],
-    ["Raumklima", "fixed"],
-    ["Raum Bad: lüften", "seen"],
+test("the possible messages: fixed, computed with a placeholder, without a title, arrived", () => {
+  const list = possibleMessages(several, de);
+  assert.deepEqual(list.map((p) => [p.label, p.tag, p.chip]), [
+    ["Fenster offen", "fixed", "fester Titel"],
+    ["Raum …: lüften", "computed", "berechnet"],
+    // a call without a title is shown by the first line of its text; it is called after its automation
+    ["ohne Titel: Bitte lüften", "untitled", "heißt „Raumklima“"],
+    ["Raum Bad: lüften", "seen", "angekommen"],
   ]);
   // a fixed title as it is, a computed one by its fixed beginning, without a title the automation's name
   assert.deepEqual(list.map((p) => p.apply), [
@@ -267,10 +268,83 @@ test("the possible messages: fixed, computed with a placeholder, arrived", () =>
 
 test("a computed title without a fixed beginning offers its longest fixed part, or nothing", () => {
   const list = possibleMessages(om({ messages: [
-    { title: "{{ wer }} ist angekommen", template: true, display: "… ist angekommen" },
-    { title: "{{ x }}", template: true, display: "…" },
-  ], multiple: true }));
+    { title: "{{ wer }} ist angekommen", template: true, display: "… ist angekommen", first_line: null },
+    { title: "{{ x }}", template: true, display: "…", first_line: null },
+  ], multiple: true }), de);
   assert.deepEqual(list.map((p) => p.apply), [{ title_mode: "contains", title_value: "ist angekommen" }, null]);
+});
+
+// ----- several messages without a title ------------------------------------------------
+
+/** An automation with two calls without a title and different texts: two messages that share one title. */
+const clash = om({
+  source: "direct",
+  messages: [
+    { title: null, template: false, display: "Feuchte Bad", first_line: "Feuchte im Bad hoch" },
+    { title: null, template: false, display: "Feuchte Bad", first_line: "Feuchte im Bad wieder normal" },
+  ],
+  seen_titles: ["Feuchte Bad"],
+  multiple: true,
+});
+
+test("several messages without a title: no title to tell them apart, shown by their first lines", () => {
+  const list = possibleMessages(clash, de);
+  assert.deepEqual(list.map((p) => [p.label, p.tag, p.chip]), [
+    ["ohne Titel: Feuchte im Bad hoch", "untitled", "heißt „Feuchte Bad“"],
+    ["ohne Titel: Feuchte im Bad wieder normal", "untitled", "heißt „Feuchte Bad“"],
+  ]);
+  // both arrive as "Feuchte Bad": no condition tells them apart, so none is offered
+  assert.deepEqual(list.map((p) => p.apply), [null, null]);
+  assert.deepEqual(possibleMessages(clash, en).map((p) => [p.label, p.chip]), [
+    ["no title: Feuchte im Bad hoch", "called “Feuchte Bad”"],
+    ["no title: Feuchte im Bad wieder normal", "called “Feuchte Bad”"],
+  ]);
+  // a call without a title and without a text
+  const bare = possibleMessages(om({ messages: [{ title: null, template: false, display: "Feuchte Bad", first_line: null }] }), de);
+  assert.equal(bare[0].label, "ohne Titel");
+});
+
+test("the red line appears for two or more messages without a title, not for one", () => {
+  assert.equal(untitledClash(clash), true);
+  // below the possible messages a grey line on the order: the titles first, then the kinds
+  assert.equal(clashNote(de, clash),
+    "Am besten erst die Titel ergänzen und dann die Meldungsarten anlegen: "
+    + "Eine jetzt gespeicherte Bedingung mit dem Titel „Feuchte Bad“ passt danach nicht mehr.");
+  assert.equal(clashNote(en, clash),
+    "Best add the titles first and then create the message kinds: "
+    + "a condition with the title “Feuchte Bad” saved now no longer matches afterwards.");
+  assert.equal(clashNote(de, several), null);
+  assert.equal(clashNote(de, null), null);
+  assert.equal(untitledClash(several), false);
+  assert.equal(untitledClash(om()), false);
+  assert.equal(untitledClash(om({ messages: [clash.messages[0]], multiple: false })), false);
+  assert.equal(untitledClash(null), false);
+  assert.equal(untitledClash(undefined), false);
+  assert.equal(de("hint_untitled_clash"),
+    "Mehrere dieser Meldungen haben keinen eigenen Titel. Sie würden sich auf dem Handy gegenseitig ersetzen. "
+    + "Gib jedem Aufruf im Aktionsformular einen eigenen Titel.");
+  assert.equal(en("hint_untitled_clash"),
+    "Several of these messages have no title of their own. They would replace each other on the phone. "
+    + "Give each call a title of its own in the action form.");
+});
+
+test("from the search: a call without a title among several opens the title, with the automation's name", () => {
+  const item = scanItem({ origin: "automation.feuchte_bad", entity_id: "automation.feuchte_bad", name: "Feuchte Bad", title: null,
+    first_line: "Feuchte im Bad hoch", suggestion: { mode: "exact", value: "Feuchte Bad" }, multiple: true, untitled_clash: true });
+  const s = startState({ from: "scan", item }, clash);
+  assert.deepEqual(s.condition, cond("automation.feuchte_bad", "exact", "Feuchte Bad"));
+  assert.equal(s.multiple, true);
+  assert.equal(s.titleOpen, true);
+  // from New: the message called after the automation, now known to be one of several
+  const fromNew = startState({ from: "new", item: unknownItem({ origin: "automation.feuchte_bad", origin_name: "Feuchte Bad",
+    title: "Feuchte Bad", multiple: true }) }, clash);
+  assert.deepEqual(fromNew.condition, cond("automation.feuchte_bad", "exact", "Feuchte Bad"));
+  assert.equal(fromNew.multiple, true);
+  // one call without a title stays "all messages of this automation"
+  const one = startState({ from: "new", item: unknownItem({ origin: "automation.feuchte_bad", origin_name: "Feuchte Bad",
+    title: "Feuchte Bad" }) }, om({ messages: [clash.messages[0]], multiple: false }));
+  assert.equal(one.condition.title_mode, "any");
+  assert.equal(one.multiple, false);
 });
 
 test("all messages of this automation needs an automation or a script as origin", () => {

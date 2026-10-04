@@ -16,19 +16,23 @@ Two sources are searched, both read-only and on request only:
 What cannot be seen: integrations that send by themselves and apps (add-ons)
 whose files live outside the configuration directory.
 
-Nothing is stored. Of a message only the title and the first line are read,
-as Home Assistant has loaded them: templates are not rendered, ``!secret``
-and blueprint inputs are already filled in.
+Nothing is stored. Of a message only the title and the first line are
+reported (the whole text only tells calls without a title apart), as Home
+Assistant has loaded them: templates are not rendered, ``!secret`` and
+blueprint inputs are already filled in.
 Of a line in a file only the file, the line number and the action names it
 mentions are reported, never the line itself.
 
 The same reading tells the page which messages one automation or script
 sends (``origin_messages``): one, so that a kind for all of its messages
-fits, or several, so that the title has to tell them apart.
+fits, or several, so that the title has to tell them apart. Several
+different messages are several, whether their titles differ or only their
+texts: each call without a title is a message of its own.
 
 A message without a title is called after its origin, by the name of the
 origin's state (an own name given in the entity settings wins over the
-alias); the search uses the same name.
+alias); the search uses the same name. Two calls without a title would
+therefore replace each other on the phone: each needs a title of its own.
 """
 
 from __future__ import annotations
@@ -90,6 +94,8 @@ MAX_HITS = 300
 # a step found in an automation covers the text hits in the lines of its block
 COVER_LINES = 40
 MIN_PREFIX = 3
+# a first line longer than this is no good example for a title on the phone
+TITLE_HINT_MAX_LENGTH = 60
 # where the steps of an automation and of a script are
 STEP_KEYS = {"automation": ("actions", "action"), "script": ("sequence",)}
 _STATEMENTS = re.compile(r"\{%.*%\}", re.DOTALL)
@@ -192,31 +198,108 @@ def suggest_title(title: str | None) -> dict[str, str] | None:
     return None
 
 
-def sent_messages(titles: list[str | None], name: str) -> list[dict[str, Any]]:
-    """Return the different messages calls with these titles send, in their order.
+def _shown_line(text: str | None) -> str | None:
+    """Return the first line of a text as shown: computed parts as "…", cut."""
+    line = _first_line(text)
+    if line is None:
+        return None
+    return (display_title(line) if _is_template(line) else line)[:TITLE_MAX_LENGTH]
 
-    ``titles`` are the whole titles as written, None for a call without one.
-    A fixed title counts once (case aside); a computed one is one message,
-    however many titles it makes, and counts once per template text, read
-    as a whole. A call without a title is called after its automation or
-    script (``name``), so it is the same message as a call with that title.
+
+def _text_key(text: str | None) -> str:
+    """Return the whole text of a call without a title as it tells the message apart."""
+    return (text or "").strip().casefold()
+
+
+def sent_messages(
+    calls: list[tuple[str | None, str | None]], name: str
+) -> list[dict[str, Any]]:
+    """Return the different messages these calls send, in their order.
+
+    ``calls`` holds the whole title and the whole text of each call as
+    written, None where there is none. A fixed title counts once (case
+    aside), whatever the texts; a computed one is one message, however many
+    titles it makes, and counts once per template text, read as a whole.
+    A call without a title is a message of its own, told apart by its text
+    (the same text twice is one message, case aside): all of them are
+    called after the automation or script (``name``, the ``display``), so
+    on the phone they would replace each other, see ``untitled_clash``.
     ``display`` shows a computed title with its computed parts as a
-    placeholder; ``title`` and ``display`` are cut to the length of a title.
+    placeholder; ``first_line`` is the first line of the text of a call
+    without a title, shown the same way, else None. ``title``, ``display``
+    and ``first_line`` are cut to the length of a title.
     """
     untitled = name[:TITLE_MAX_LENGTH]
-    messages: dict[str, dict[str, Any]] = {}
-    for title in titles:
-        template = title is not None and _is_template(title)
-        shown = display_title(title) if title and template else (title or untitled)
+    messages: dict[tuple[bool, str], dict[str, Any]] = {}
+    for title, text in calls:
+        if title is None:
+            messages.setdefault(
+                (False, _text_key(text)),
+                {
+                    "title": None,
+                    "template": False,
+                    "display": untitled,
+                    "first_line": _shown_line(text),
+                },
+            )
+            continue
+        template = _is_template(title)
+        shown = display_title(title) if template else title
         messages.setdefault(
-            (title or untitled).casefold(),
+            (True, title.casefold()),
             {
-                "title": title[:TITLE_MAX_LENGTH] if title else None,
+                "title": title[:TITLE_MAX_LENGTH],
                 "template": template,
                 "display": shown[:TITLE_MAX_LENGTH],
+                "first_line": None,
             },
         )
     return list(messages.values())
+
+
+def untitled_clash(messages: list[dict[str, Any]]) -> bool:
+    """Return True when two or more of these messages have no title.
+
+    All of them would be called after their automation or script and replace
+    each other on the phone: each call needs a title of its own.
+    """
+    return sum(1 for message in messages if message["title"] is None) > 1
+
+
+def title_hints(
+    calls: list[tuple[str | None, str | None]], name: str
+) -> list[str | None]:
+    """Return for each call without a title an example of a title, if a good one.
+
+    ``calls`` are the whole title and text of each call, as for
+    ``sent_messages``; the answer has one entry per call, None for a call
+    with a title. The example is the first line of the text, when it makes
+    a title that tells this message apart: it has no computed part (else
+    every value would be a message of its own), it is at most
+    ``TITLE_HINT_MAX_LENGTH`` long, no other message without a title begins
+    with the same line, and it is neither a title of another call nor the
+    name of the automation or script (case aside). Otherwise None: the page
+    then asks for a title without an example. The same text twice is one
+    message and keeps its line.
+    """
+    texts: dict[str, set[str]] = {}
+    for title, text in calls:
+        line = _first_line(text) if title is None else None
+        if line is not None:
+            texts.setdefault(line.casefold(), set()).add(_text_key(text))
+    taken = {name.casefold(), *(title.casefold() for title, _ in calls if title)}
+    hints: list[str | None] = []
+    for title, text in calls:
+        line = _first_line(text) if title is None else None
+        fits = (
+            line is not None
+            and not _is_template(line)
+            and len(line) <= TITLE_HINT_MAX_LENGTH
+            and line.casefold() not in taken
+            and len(texts[line.casefold()]) == 1
+        )
+        hints.append(line if fits else None)
+    return hints
 
 
 def scan_suggestion(
@@ -228,9 +311,10 @@ def scan_suggestion(
     automation" (``{"mode": "any"}``, the origin is the item's). One that
     sends several keeps the title: as it is, its fixed beginning, or for a
     call without a title the name of the automation, which becomes the
-    title. A script has no origin of its own (whoever starts it is), so its
-    suggestion always follows the title. A notification in the Home
-    Assistant UI does not go through the center: its title only.
+    title (the title it has today; with several such calls the page asks
+    for a title of each). A script has no origin of its own (whoever starts
+    it is), so its suggestion always follows the title. A notification in
+    the Home Assistant UI does not go through the center: its title only.
     """
     if item["status"] == STATUS_PERSISTENT:
         return suggest_title(item["title"])
@@ -268,9 +352,10 @@ def _call_data(step: dict[str, Any], name: str) -> tuple[dict[str, Any], list[st
     return data, targets
 
 
-def call_title(step: dict[str, Any], name: str) -> str | None:
-    """Return the whole title of a notifying step as written, None without one."""
-    return _text(_call_data(step, name)[0].get("title"))
+def call_parts(step: dict[str, Any], name: str) -> tuple[str | None, str | None]:
+    """Return the whole title and the whole text of a notifying step as written."""
+    data = _call_data(step, name)[0]
+    return _text(data.get("title")), _text(data.get("message"))
 
 
 def describe_call(step: dict[str, Any], name: str, config_dir: str) -> dict[str, Any]:
@@ -328,13 +413,13 @@ def _sent_by(hass: HomeAssistant, origin: str, *, direct: bool) -> list[dict[str
     entity = next((e for e in _entities(hass, domain) if e.entity_id == origin), None)
     if entity is None:
         return []
-    titles = [
-        call_title(step, name)
+    calls = [
+        call_parts(step, name)
         for step, name in _entity_calls(entity, domain)
         if (name not in CENTER_ACTIONS) is direct
         and not (direct and _status([name]) == STATUS_PERSISTENT)
     ]
-    return sent_messages(titles, _entity_name(hass, entity))
+    return sent_messages(calls, _entity_name(hass, entity))
 
 
 def config_messages(hass: HomeAssistant, origin: str) -> list[dict[str, Any]]:
@@ -390,7 +475,8 @@ def origin_messages(
     first; the center collects them. The calls to the center decide
     (``config``), else the titles that arrived (``seen``), else the calls
     that still go past the center (``direct``): an automation found by the
-    search before it was changed. ``any_allowed`` is false for an origin
+    search before it was changed. Each call without a title is a message of
+    its own, see ``sent_messages``. ``any_allowed`` is false for an origin
     that is no automation or script ("unknown"): no "all messages of" for
     it, and the titles of all unknown senders are not its messages, so it
     has none to tell apart.
@@ -462,15 +548,32 @@ def scan_entities(
             items = [describe_call(step, call, config_dir) for step, call in calls]
             # what it sends once every call goes through the center; a
             # notification in the Home Assistant UI stays where it is
-            titles = [
-                call_title(step, call)
-                for (step, call), item in zip(calls, items, strict=True)
+            sending = [
+                (index, call_parts(step, call))
+                for index, ((step, call), item) in enumerate(
+                    zip(calls, items, strict=True)
+                )
                 if item["status"] != STATUS_PERSISTENT
             ]
-            multiple = len(sent_messages(titles, name)) > 1
+            parts = [part for _, part in sending]
+            sent = sent_messages(parts, name)
+            multiple = len(sent) > 1
+            clash = untitled_clash(sent)
+            # with several calls without a title: an example of a title each
+            hints: dict[int, str | None] = (
+                dict(
+                    zip(
+                        (index for index, _ in sending),
+                        title_hints(parts, name),
+                        strict=True,
+                    )
+                )
+                if clash
+                else {}
+            )
             # a script started by an automation counts as that automation
             origin = entity.entity_id if domain == "automation" else None
-            for item in items:
+            for index, item in enumerate(items):
                 # the UI editor works for what lives in automations.yaml / scripts.yaml
                 edit_url = None
                 if item["file"] == "automations.yaml" and unique_id:
@@ -494,6 +597,8 @@ def scan_entities(
                         **item,
                         "suggestion": suggestion,
                         "multiple": multiple,
+                        "untitled_clash": clash,
+                        "title_hint": hints.get(index),
                         "source": domain,
                         "entity_id": entity.entity_id,
                         "name": name,

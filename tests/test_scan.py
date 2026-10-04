@@ -12,10 +12,12 @@ from pytest_homeassistant_custom_component.typing import WebSocketGenerator
 
 from custom_components.message_center.const import DOMAIN
 from custom_components.message_center.scan import (
+    TITLE_HINT_MAX_LENGTH,
     display_title,
     find_calls,
     scan_files,
     suggest_title,
+    title_hints,
 )
 
 from .conftest import kind_data
@@ -355,9 +357,14 @@ async def test_scripts_from_the_own_blueprint_are_not_reported(
     await hass.async_add_executor_job(path.unlink)
 
 
-def notify_step(title: str | None, *, action: str = "notify.mobile_app_handy") -> dict:
+def notify_step(
+    title: str | None,
+    *,
+    action: str = "notify.mobile_app_handy",
+    message: str = "Erste Zeile\nmehr",
+) -> dict:
     """Return a notifying step with an optional title."""
-    data = {"message": "Erste Zeile\nmehr"}
+    data = {"message": message}
     if title is not None:
         data["title"] = title
     return {"action": action, "data": data}
@@ -478,3 +485,182 @@ async def test_scan_suggests_all_messages_of_an_automation_that_sends_one(
     origins = {i["name"]: i["origin"] for i in found}
     assert origins["Nur eine"] == "automation.nur_eine"
     assert origins["Skript ohne Titel"] is None
+
+
+async def test_scan_counts_every_call_without_a_title_as_a_message_of_its_own(
+    hass: HomeAssistant,
+    phone: list[ServiceCall],
+    make_entry: Any,
+    hass_ws_client: WebSocketGenerator,
+) -> None:
+    """Two calls without a title and with different texts are two messages.
+
+    Both would be called after the automation and replace each other on the
+    phone: the automation sends several messages, and each of these calls
+    is told to get a title of its own (``untitled_clash``), with the first
+    line of its text as an example (``title_hint``) where that line is fixed
+    and tells the call apart. The same text twice is one message; a single
+    call without a title stays "all messages of this automation". A script
+    is counted the same way.
+    """
+    assert await async_setup_component(
+        hass,
+        "automation",
+        {
+            "automation": [
+                automation(
+                    "Feuchte Bad",
+                    notify_step(None, message="Feuchte im Bad hoch\nBitte lüften."),
+                    notify_step(None, message="Feuchte im Bad wieder normal"),
+                ),
+                automation(
+                    "Gleicher Text",
+                    notify_step(None, message="Tür offen"),
+                    notify_step(None, message="tür offen"),
+                ),
+                automation(
+                    "Einmal ohne",
+                    notify_step("Mit Titel"),
+                    notify_step(None, message="Ohne Titel"),
+                ),
+                # a computed first line is no title: every value would be a
+                # message of its own; the same first line tells nothing apart
+                automation(
+                    "Vorlagen",
+                    notify_step(
+                        None,
+                        message="{% if is_state('binary_sensor.f', 'on') %}"
+                        "\nFenster offen{% endif %}",
+                    ),
+                    notify_step(None, message="{{ states('sensor.h') }} % im Bad"),
+                ),
+                automation(
+                    "Waschmaschine",
+                    notify_step(None, message="Waschmaschine\nFertig"),
+                    notify_step(None, message="Waschmaschine\nFehler"),
+                ),
+            ]
+        },
+    )
+    assert await async_setup_component(
+        hass,
+        "script",
+        {
+            "script": {
+                "zwei": {
+                    "alias": "Zwei ohne Titel",
+                    "sequence": [
+                        notify_step(None, message="Eins"),
+                        notify_step(None, message="Zwei"),
+                    ],
+                }
+            }
+        },
+    )
+    entry = make_entry(kinds=[])
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+
+    found = (await scan(hass, hass_ws_client))["found"]
+    items = {
+        (i["name"], i["title"], i["first_line"]): (
+            i["suggestion"],
+            i["multiple"],
+            i["untitled_clash"],
+            i["title_hint"],
+        )
+        for i in found
+    }
+    any_title = {"mode": "any"}
+    named = {"mode": "exact", "value": "Feuchte Bad"}
+    assert items == {
+        ("Feuchte Bad", None, "Feuchte im Bad hoch"): (
+            named,
+            True,
+            True,
+            "Feuchte im Bad hoch",
+        ),
+        ("Feuchte Bad", None, "Feuchte im Bad wieder normal"): (
+            named,
+            True,
+            True,
+            "Feuchte im Bad wieder normal",
+        ),
+        ("Gleicher Text", None, "Tür offen"): (any_title, False, False, None),
+        ("Gleicher Text", None, "tür offen"): (any_title, False, False, None),
+        ("Einmal ohne", "Mit Titel", "Erste Zeile"): (
+            {"mode": "exact", "value": "Mit Titel"},
+            True,
+            False,
+            None,
+        ),
+        ("Einmal ohne", None, "Ohne Titel"): (
+            {"mode": "exact", "value": "Einmal ohne"},
+            True,
+            False,
+            None,
+        ),
+        ("Vorlagen", None, "{% if is_state('binary_sensor.f', 'on') %}"): (
+            {"mode": "exact", "value": "Vorlagen"},
+            True,
+            True,
+            None,
+        ),
+        ("Vorlagen", None, "{{ states('sensor.h') }} % im Bad"): (
+            {"mode": "exact", "value": "Vorlagen"},
+            True,
+            True,
+            None,
+        ),
+        ("Waschmaschine", None, "Waschmaschine"): (
+            {"mode": "exact", "value": "Waschmaschine"},
+            True,
+            True,
+            None,
+        ),
+        ("Zwei ohne Titel", None, "Eins"): (None, True, True, "Eins"),
+        ("Zwei ohne Titel", None, "Zwei"): (None, True, True, "Zwei"),
+    }
+    # both calls of "Waschmaschine" begin with the same line
+    assert len([i for i in found if i["name"] == "Waschmaschine"]) == 2
+
+
+def test_title_hints_only_for_a_fixed_line_that_tells_the_call_apart() -> None:
+    """The first line of a call without a title as an example for its title.
+
+    Only a line without computed parts, short enough for a title on the
+    phone, that no other message without a title begins with and that is
+    neither a title of the automation nor its name (case aside); the same
+    text twice is one message and keeps its line. Calls with a title get
+    nothing.
+    """
+    calls = [
+        ("Fenster offen", "Bitte schließen."),
+        (None, "Feuchte im Bad hoch\nBitte lüften."),
+        (None, "feuchte im bad hoch\nbitte lüften."),
+        (None, "Waschmaschine\nFertig"),
+        (None, "waschmaschine\nFehler E3"),
+        (None, "{% if x %}\nTür offen{% endif %}"),
+        (None, "{{ states('sensor.h') }} % im Bad"),
+        (None, "Fenster offen\nim Bad"),
+        (None, "Klima"),
+        (None, "Sehr lang " * 7),
+        (None, None),
+        (None, "Strom zurück"),
+    ]
+    assert title_hints(calls, "Klima") == [
+        None,
+        "Feuchte im Bad hoch",
+        "feuchte im bad hoch",
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        None,
+        "Strom zurück",
+    ]
+    assert len(("Sehr lang " * 7).strip()) > TITLE_HINT_MAX_LENGTH

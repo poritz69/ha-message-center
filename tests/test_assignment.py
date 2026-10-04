@@ -490,7 +490,12 @@ async def test_origin_messages_read_the_automation(
     assert wash == {
         "source": "config",
         "messages": [
-            {"title": "Wäsche fertig", "template": False, "display": "Wäsche fertig"}
+            {
+                "title": "Wäsche fertig",
+                "template": False,
+                "display": "Wäsche fertig",
+                "first_line": None,
+            }
         ],
         "seen_titles": [],
         "multiple": False,
@@ -508,13 +513,21 @@ async def test_origin_messages_read_the_automation(
             "title": "Raum {{ trigger.event.data.room }}: lüften",
             "template": True,
             "display": "Raum …: lüften",
+            "first_line": None,
         }
     ]
     assert room["multiple"] is False
 
     mail = await page.ok("origin_messages", origin=MAIL)
+    # one call without a title: one message, called after the automation,
+    # shown with the first line of its text
     assert mail["messages"] == [
-        {"title": None, "template": False, "display": "Briefkasten"}
+        {
+            "title": None,
+            "template": False,
+            "display": "Briefkasten",
+            "first_line": "Post ist da.",
+        }
     ]
     assert mail["multiple"] is False
 
@@ -522,6 +535,82 @@ async def test_origin_messages_read_the_automation(
     assert script["source"] == "config"
     assert script["messages"][0]["template"] is True
     assert script["messages"][0]["display"] == "…"
+
+
+async def test_origin_messages_count_each_call_without_a_title(
+    hass: HomeAssistant,
+    phone: list[ServiceCall],
+    center_entry: MockConfigEntry,
+    page: Page,
+) -> None:
+    """Two calls without a title and with different texts: several messages.
+
+    ``origin_messages`` lists both with their first lines and says
+    ``multiple``; so does the entry under *New*, and the search agrees.
+    """
+    assert await async_setup_component(
+        hass,
+        "automation",
+        {
+            "automation": [
+                {
+                    "id": "feuchte_bad",
+                    "alias": "Feuchte Bad",
+                    "triggers": trigger("test_humid"),
+                    "actions": [
+                        {
+                            "action": "notify.message_center",
+                            "data": {"message": "Feuchte im Bad hoch\nBitte lüften."},
+                        },
+                        {
+                            "if": [
+                                {
+                                    "condition": "template",
+                                    "value_template": "{{ false }}",
+                                }
+                            ],
+                            "then": [
+                                {
+                                    "action": "notify.message_center",
+                                    "data": {"message": "Feuchte im Bad wieder normal"},
+                                }
+                            ],
+                        },
+                    ],
+                }
+            ]
+        },
+    )
+    await hass.async_block_till_done()
+
+    result = await page.ok("origin_messages", origin="automation.feuchte_bad")
+    assert result["source"] == "config"
+    assert result["messages"] == [
+        {
+            "title": None,
+            "template": False,
+            "display": "Feuchte Bad",
+            "first_line": "Feuchte im Bad hoch",
+        },
+        {
+            "title": None,
+            "template": False,
+            "display": "Feuchte Bad",
+            "first_line": "Feuchte im Bad wieder normal",
+        },
+    ]
+    assert result["multiple"] is True
+
+    await fire(hass, "test_humid")
+    overview = await page.ok("overview")
+    assert [(u["title"], u["multiple"]) for u in overview["unknown"]] == [
+        ("Feuchte Bad", True)
+    ]
+    found = (await page.ok("scan"))["found"]
+    assert [(i["multiple"], i["untitled_clash"]) for i in found] == [
+        (True, True),
+        (True, True),
+    ]
 
 
 async def test_origin_messages_fall_back_to_the_titles_seen(
@@ -1158,8 +1247,8 @@ async def test_origin_messages_of_an_automation_that_still_pushes_directly(
     assert two == {
         "source": "direct",
         "messages": [
-            {"title": "Eins", "template": False, "display": "Eins"},
-            {"title": "Zwei", "template": False, "display": "Zwei"},
+            {"title": "Eins", "template": False, "display": "Eins", "first_line": None},
+            {"title": "Zwei", "template": False, "display": "Zwei", "first_line": None},
         ],
         "seen_titles": [],
         "multiple": True,
@@ -1195,17 +1284,55 @@ def test_long_computed_titles_are_shown_and_told_apart_by_their_whole_text() -> 
     first = head + "Fenster Bad offen{% endif %}"
     second = head + "Fenster Bad gekippt{% endif %}"
     assert len(head) > 100
-    messages = sent_messages([first, second], "Fenster")
+    messages = sent_messages([(first, "x"), (second, "x")], "Fenster")
     assert [(m["template"], m["display"]) for m in messages] == [
         (True, "…"),
         (True, "…"),
     ]
     assert all(len(m["title"]) == 100 for m in messages)
-    # a fixed title and the name of the automation for a call without one
-    assert sent_messages(["Fest", None, "fest", "fenster"], "Fenster") == [
-        {"title": "Fest", "template": False, "display": "Fest"},
-        {"title": None, "template": False, "display": "Fenster"},
+    # a fixed title once, case aside; a call without a title is a message of
+    # its own, called after the automation, even next to a title of that name
+    calls = [("Fest", "a"), (None, "Offen"), ("fest", "b"), ("fenster", "c")]
+    assert sent_messages(calls, "Fenster") == [
+        {"title": "Fest", "template": False, "display": "Fest", "first_line": None},
+        {"title": None, "template": False, "display": "Fenster", "first_line": "Offen"},
+        {
+            "title": "fenster",
+            "template": False,
+            "display": "fenster",
+            "first_line": None,
+        },
     ]
+
+
+def test_each_call_without_a_title_is_a_message_of_its_own() -> None:
+    """Calls without a title differ by their text, not by their title.
+
+    All of them are called after the automation; two with different texts
+    are two messages (that would replace each other on the phone), the same
+    text twice is one, case and spaces aside. Their first line is shown,
+    computed parts as a placeholder, cut to the length of a title.
+    """
+    long_line = "Sehr lang " * 20
+    calls = [
+        (None, "Feuchte im Bad hoch\nBitte lüften."),
+        (None, "  feuchte im bad hoch\nbitte lüften. "),
+        (None, "Feuchte im Bad wieder normal"),
+        (None, "{{ raum }}: Fenster offen\nseit {{ minuten }} min"),
+        (None, None),
+        (None, long_line),
+    ]
+    messages = sent_messages(calls, "Raumklima")
+    assert [(m["title"], m["display"], m["first_line"]) for m in messages] == [
+        (None, "Raumklima", "Feuchte im Bad hoch"),
+        (None, "Raumklima", "Feuchte im Bad wieder normal"),
+        (None, "Raumklima", "…: Fenster offen"),
+        (None, "Raumklima", None),
+        (None, "Raumklima", long_line.strip()[:100]),
+    ]
+    assert not any(m["template"] for m in messages)
+    # one call without a title is one message
+    assert len(sent_messages([(None, "Post ist da.")], "Briefkasten")) == 1
 
 
 async def test_origin_messages_read_long_computed_titles_whole(

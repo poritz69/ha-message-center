@@ -4,8 +4,9 @@ import { fetchKindMatches, fetchOriginMessages, saveEntry } from "./api";
 import { fallbackStyles, formFields, type Field, type FormData } from "./editor";
 import type { Translate } from "./i18n";
 import {
-  appliesTo, conditionComplete, conditionOf, counted, duplicateIn, duplicateOf, fill, forOrigin, kindPayload, landsInNew, modeOptions,
-  originAllowsAny, possibleMessages, probeOf, sourceOrigin, startState, type Apply, type Condition, type DialogStart, type KindSource,
+  appliesTo, clashNote, conditionComplete, conditionOf, counted, duplicateIn, duplicateOf, fill, forOrigin, kindPayload, landsInNew, modeOptions,
+  originAllowsAny, possibleMessages, probeOf, sourceOrigin, startState, untitledClash, type Apply, type Condition, type DialogStart,
+  type KindSource,
 } from "./kind-logic";
 import type { Config, HomeAssistant, KindMatches, MatchedPair, OriginMessages, TitleMode, UnknownItem } from "./types";
 
@@ -22,7 +23,10 @@ const pairKey = (u: { origin: string; title: string }) => JSON.stringify([u.orig
  * (advanced)" opens them. For an automation that sends one message the
  * condition is "all messages of this automation" (an existing kind is put on
  * it with a note and the offer to keep its condition); for one that sends
- * several the text is open, with a hint and the messages it may send. At the
+ * several the text is open, with a hint and the messages it may send, and
+ * when two or more of them have no title, a second hint that each call needs
+ * one (they would replace each other on the phone) and, below the messages,
+ * a note to add the titles before the kinds. At the
  * bottom the dialog shows what the condition matches. A new kind without a
  * template starts with open fields and can take an entry of "new".
  */
@@ -74,9 +78,12 @@ export class MessageCenterKindEditor extends LitElement {
     .possible { margin: 10px 0 0; }
     .possible .p-head { font-size: 12px; font-weight: 500; color: var(--secondary-text-color); margin-bottom: 2px; }
     .possible ul { margin: 0; padding: 0; list-style: none; }
-    .possible li { display: flex; align-items: center; gap: 8px; min-height: 34px; border-top: 1px solid var(--divider-color); font-size: 13px; }
+    .possible li { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 8px; min-height: 34px; padding: 3px 0; box-sizing: border-box;
+      border-top: 1px solid var(--divider-color); font-size: 13px; }
     .possible li.current .p-label { font-weight: 600; }
     .p-label { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+    .p-end { display: flex; align-items: center; gap: 8px; margin-left: auto; max-width: 100%; }
+    .p-end .chip { flex: 0 1 auto; min-width: 0; overflow-wrap: anywhere; }
     .chip { flex: none; padding: 1px 8px; border-radius: 10px; font-size: 11.5px; background: var(--secondary-background-color); color: var(--secondary-text-color); }
     .matches { margin-top: 14px; padding: 10px 12px; border-radius: 8px; font-size: 13px; line-height: 1.4;
       background: color-mix(in srgb, var(--primary-text-color) 5%, transparent); }
@@ -420,6 +427,7 @@ export class MessageCenterKindEditor extends LitElement {
     const c = this._cond;
     const open = !this._locked || this._advanced;
     const any = c.title_mode === "any";
+    const order = clashNote(t, this._om);
     const fields: Field[] = [
       { name: "origin", disabled: !open, selector: { select: { options: this._originOptions(), mode: "dropdown" } } },
       { name: "title_mode", required: true, disabled: !open, selector: { select: { options: modeOptions(t, c.origin), mode: "dropdown" } } },
@@ -435,23 +443,25 @@ export class MessageCenterKindEditor extends LitElement {
       ${this._switched ? html`<div class="note">${forOrigin(t, "hint_one", c.origin)} <button class="link"
         @click=${() => this._keepPrevious()}>${t("keep_previous")}</button></div>` : nothing}
       ${this._advanced ? html`<div class="hint">${t("hint_advanced")}</div>` : nothing}
-      ${this._multiple ? html`<div class="hint">${forOrigin(t, "hint_multiple", c.origin)}</div>${this._renderPossible()}` : nothing}
+      ${this._multiple ? html`<div class="hint">${forOrigin(t, "hint_multiple", c.origin)}</div>${
+        untitledClash(this._om) ? html`<div class="hint">${t("hint_untitled_clash")}</div>` : nothing}${this._renderPossible()}${
+        order ? html`<div class="note">${order}</div>` : nothing}` : nothing}
     </div>`;
   }
 
   /** The messages the automation may send; "use" puts one into the condition. */
   private _renderPossible() {
     const t = this.t;
-    const list = this._om ? possibleMessages(this._om) : [];
+    const list = this._om ? possibleMessages(this._om, t) : [];
     if (!list.length) return nothing;
     const c = this._cond;
     const isCurrent = (a: Apply) => !!a && a.title_mode === c.title_mode && a.title_value.toLowerCase() === c.title_value.trim().toLowerCase();
     return html`<div class="possible">
       <div class="p-head">${t("possible_title")}</div>
       <ul>${list.map((p) => html`<li class=${isCurrent(p.apply) ? "current" : ""}>
-        <span class="p-label">${p.label}</span><span class="chip">${t(`possible_${p.tag}`)}</span>
+        <span class="p-label">${p.label}</span><span class="p-end"><span class="chip">${p.chip}</span>
         ${p.apply && !isCurrent(p.apply) ? html`<ha-button appearance="plain" size="small"
-          @click=${() => this._applyPossible(p.apply)}>${t("possible_use")}</ha-button>` : nothing}
+          @click=${() => this._applyPossible(p.apply)}>${t("possible_use")}</ha-button>` : nothing}</span>
       </li>`)}</ul>
     </div>`;
   }

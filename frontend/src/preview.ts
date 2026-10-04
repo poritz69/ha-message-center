@@ -17,7 +17,8 @@ import type { Config, Kind, KindMatches, MatchedPair, MessageEntry, Messages, Or
 //   ?theme=light         light colours (without it: dark; preview.css holds both)
 //   ?kind=one            the kind dialog: one (from "new", an automation with one message), many (one with
 //                        several), advanced (one, condition opened), edit, switched (edit of a kind whose automation
-//                        sends one message), blank, duplicate, overlap, scan
+//                        sends one message), blank, duplicate, overlap, scan, clash (from the search: a call without
+//                        a title in an automation with two of them), untitled (from the search: the only call without one)
 //   ?push=message        as a tapped push opens the page with the option "Message Center": "?message=<id>" of a
 //                        delivered message that came for the third time (two earlier ones in "older"; only the newest
 //                        unfolds); ?push=classify: the push of a message no kind takes ("?classify=<id>"); ?push=missing:
@@ -215,8 +216,8 @@ interface Example {
 const sends = (o: Partial<OriginMessages> & { titles?: (string | [string, string])[] }): OriginMessages => ({
   source: "config", seen_titles: [], multiple: (o.titles?.length ?? 0) > 1, any_allowed: true,
   messages: (o.titles ?? []).map((t) => (typeof t === "string"
-    ? { title: t, template: false, display: t }
-    : { title: t[0], template: true, display: t[1] })),
+    ? { title: t, template: false, display: t, first_line: null }
+    : { title: t[0], template: true, display: t[1], first_line: null })),
   ...o,
 });
 
@@ -306,9 +307,11 @@ const germanExample = (): Example => {
 
   const scan: ScanResult = {
     found: [
-      // two calls without a title: one message, called after the automation
-      scanItem({ first_line: "Feuchte im Bad hoch", suggestion: { mode: "any" }, line: 118 }),
-      scanItem({ first_line: "Feuchte im Bad wieder normal", suggestion: { mode: "any" }, line: 164 }),
+      // two calls without a title: two messages, both called after the automation, that would replace each other
+      scanItem({ first_line: "Feuchte im Bad hoch", suggestion: { mode: "exact", value: "Klima – Feuchte überwachen" }, multiple: true,
+        untitled_clash: true, title_hint: "Feuchte im Bad hoch", line: 118 }),
+      scanItem({ first_line: "Feuchte im Bad wieder normal", suggestion: { mode: "exact", value: "Klima – Feuchte überwachen" }, multiple: true,
+        untitled_clash: true, title_hint: "Feuchte im Bad wieder normal", line: 164 }),
       scanItem({ entity_id: "automation.fenster", name: "Klima – Fenster überwachen", origin: "automation.fenster", file: "packages/fenster.yaml", line: 77,
         title: "Fenster offen", suggestion: { mode: "exact", value: "Fenster offen" }, multiple: true, kind: "Fenster offen" }),
       scanItem({ entity_id: "automation.fenster", name: "Klima – Fenster überwachen", origin: "automation.fenster", file: "packages/fenster.yaml", line: 131,
@@ -316,6 +319,9 @@ const germanExample = (): Example => {
       scanItem({ entity_id: "automation.muellabfuhr", name: "Haushalt – Müllabfuhr", origin: "automation.muellabfuhr", file: "automations.yaml", line: 42,
         edit_url: "/config/automation/edit/1759", service: "notify.message_center", target: "notify.message_center", status: "center",
         title: "Müllabfuhr morgen", suggestion: { mode: "any" }, kind: "Müllabfuhr" }),
+      // one call without a title: one message, called after the automation, no title needed
+      scanItem({ entity_id: "automation.briefkasten", name: "Haushalt – Briefkasten", origin: "automation.briefkasten", file: "automations.yaml",
+        line: 88, first_line: "Post ist da", suggestion: { mode: "any" } }),
       scanItem({ source: "script", entity_id: "script.sag_bescheid", name: "Sag Bescheid", origin: null, file: "scripts.yaml", line: 9,
         edit_url: "/config/script/edit/sag_bescheid", service: "notify.mobile_app_handy_alex", target: "notify.mobile_app_handy_alex",
         title: "{{ titel }}", title_template: true, suggestion: null }),
@@ -325,7 +331,7 @@ const germanExample = (): Example => {
       { file: "appdaemon/apps/muell.py", line: 31, text: "notify.mobile_app_handy_alex", status: "direct" },
       { file: "configuration.yaml", line: 58, text: "notify.message_center", status: "center" },
     ],
-    counts: { automations: 23, scripts: 4, files: 18, direct: 5 },
+    counts: { automations: 23, scripts: 4, files: 18, direct: 6 },
   };
 
   const sent: Record<string, OriginMessages> = {
@@ -334,8 +340,13 @@ const germanExample = (): Example => {
       seen_titles: ["Akku schwach: Rauchmelder Flur", "Trockner fertig", "Akku schwach: Fenstersensor Bad"] }),
     "automation.fenster": sends({ titles: ["Fenster offen", ["Raum {{ raum }}: Fenster lange offen", "Raum …: Fenster lange offen"]],
       seen_titles: ["Fenster offen"] }),
-    "automation.feuchte": sends({ source: "direct", messages: [{ title: null, template: false, display: "Klima – Feuchte überwachen" }],
-      seen_titles: ["Feuchte hoch: Bad"] }),
+    "automation.feuchte": sends({ source: "direct", multiple: true, messages: [
+      { title: null, template: false, display: "Klima – Feuchte überwachen", first_line: "Feuchte im Bad hoch" },
+      { title: null, template: false, display: "Klima – Feuchte überwachen", first_line: "Feuchte im Bad wieder normal" }],
+      // it still pushes directly: nothing of it has arrived (titles that arrived would answer before its direct calls)
+      seen_titles: [] }),
+    "automation.briefkasten": sends({ source: "direct", messages: [
+      { title: null, template: false, display: "Haushalt – Briefkasten", first_line: "Post ist da" }] }),
     "automation.sicherung": sends({ titles: ["Sicherung abgeschlossen"], seen_titles: ["Sicherung abgeschlossen"] }),
     "automation.wasser": sends({ titles: ["Wassermelder Keller"], seen_titles: ["Wassermelder Keller"] }),
   };
@@ -425,8 +436,10 @@ const englishExample = (): Example => {
     origin: "automation.humidity", target: "notify.send_message → notify.alex_s_phone", file: "packages/bathroom_humidity.yaml", ...o });
   const scan: ScanResult = {
     found: [
-      found({ first_line: "Humidity in the bathroom high", suggestion: { mode: "any" }, line: 118 }),
-      found({ first_line: "Humidity in the bathroom back to normal", suggestion: { mode: "any" }, line: 164 }),
+      found({ first_line: "Humidity in the bathroom high", suggestion: { mode: "exact", value: "Climate – Watch humidity" }, multiple: true,
+        untitled_clash: true, title_hint: "Humidity in the bathroom high", line: 118 }),
+      found({ first_line: "Humidity in the bathroom back to normal", suggestion: { mode: "exact", value: "Climate – Watch humidity" },
+        multiple: true, untitled_clash: true, title_hint: "Humidity in the bathroom back to normal", line: 164 }),
       found({ entity_id: "automation.window", name: "Climate – Watch windows", origin: "automation.window", file: "packages/windows.yaml", line: 77,
         title: "Window open", suggestion: { mode: "exact", value: "Window open" }, multiple: true, kind: "Window open" }),
       found({ entity_id: "automation.window", name: "Climate – Watch windows", origin: "automation.window", file: "packages/windows.yaml", line: 131,
@@ -434,6 +447,8 @@ const englishExample = (): Example => {
       found({ entity_id: "automation.waste_collection", name: "Household – Waste collection", origin: "automation.waste_collection", file: "automations.yaml", line: 42,
         edit_url: "/config/automation/edit/1759", service: "notify.message_center", target: "notify.message_center", status: "center",
         title: "Waste collection tomorrow", suggestion: { mode: "any" }, kind: "Waste collection" }),
+      found({ entity_id: "automation.mailbox", name: "Household – Mailbox", origin: "automation.mailbox", file: "automations.yaml", line: 88,
+        first_line: "Mail has arrived", suggestion: { mode: "any" } }),
       found({ source: "script", entity_id: "script.let_me_know", name: "Let me know", origin: null, file: "scripts.yaml", line: 9,
         edit_url: "/config/script/edit/let_me_know", service: "notify.mobile_app_alex_s_phone", target: "notify.mobile_app_alex_s_phone",
         title: "{{ title }}", title_template: true, suggestion: null }),
@@ -443,7 +458,7 @@ const englishExample = (): Example => {
       { file: "appdaemon/apps/waste.py", line: 31, text: "notify.mobile_app_alex_s_phone", status: "direct" },
       { file: "configuration.yaml", line: 58, text: "notify.message_center", status: "center" },
     ],
-    counts: { automations: 23, scripts: 4, files: 18, direct: 5 },
+    counts: { automations: 23, scripts: 4, files: 18, direct: 6 },
   };
 
   const sent: Record<string, OriginMessages> = {
@@ -452,8 +467,13 @@ const englishExample = (): Example => {
       seen_titles: ["Battery low: Hallway smoke detector", "Dryer done", "Battery low: Bathroom window sensor"] }),
     "automation.window": sends({ titles: ["Window open", ["Room {{ room }}: window open long", "Room …: window open long"]],
       seen_titles: ["Window open"] }),
-    "automation.humidity": sends({ source: "direct", messages: [{ title: null, template: false, display: "Climate – Watch humidity" }],
-      seen_titles: ["Humidity high: Bathroom"] }),
+    "automation.humidity": sends({ source: "direct", multiple: true, messages: [
+      { title: null, template: false, display: "Climate – Watch humidity", first_line: "Humidity in the bathroom high" },
+      { title: null, template: false, display: "Climate – Watch humidity", first_line: "Humidity in the bathroom back to normal" }],
+      // it still pushes directly: nothing of it has arrived (titles that arrived would answer before its direct calls)
+      seen_titles: [] }),
+    "automation.mailbox": sends({ source: "direct", messages: [
+      { title: null, template: false, display: "Household – Mailbox", first_line: "Mail has arrived" }] }),
     "automation.backup": sends({ titles: ["Backup finished"], seen_titles: ["Backup finished"] }),
     "automation.water": sends({ titles: ["Water leak basement"], seen_titles: ["Water leak basement"] }),
   };
@@ -687,6 +707,7 @@ async function kindDemo(panel: HTMLElement & { updateComplete: Promise<unknown>;
     many: { from: "new", item: overview.unknown[1] }, edit: { from: "edit", kind: config.kinds[1] },
     switched: { from: "edit", kind: config.kinds[3] },
     blank: { from: "blank" }, duplicate: { from: "blank" }, overlap: { from: "blank" }, scan: { from: "scan", item: scan.found[3] },
+    clash: { from: "scan", item: scan.found[0] }, untitled: { from: "scan", item: scan.found[5] },
   };
   if (!sources[demo]) return;
   panel._openKindEditor(sources[demo]);

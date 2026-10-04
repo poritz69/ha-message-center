@@ -1,6 +1,7 @@
 // Tests of the notes the search over the house shows for a call: a call
 // without a title is called after its automation, so it needs no title
-// unless the automation sends several messages. Run with "npm test".
+// unless the automation sends several messages; two or more calls without
+// a title would replace each other, so each should get one. Run with "npm test".
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { fill } from "../src/kind-logic";
@@ -24,6 +25,43 @@ test("a call without a title in an automation that sends one message needs no ti
 test("in an automation that sends several messages it should get a title of its own", () => {
   assert.deepEqual(scanNote(item({ multiple: true, suggestion: { mode: "exact", value: "Washing machine" } })),
     { key: "scan_untitled_many", name: "Washing machine" });
+});
+
+test("several calls without a title would replace each other: each should get a title, the first line suggested", () => {
+  const clash = item({ multiple: true, untitled_clash: true, title_hint: "The laundry is done",
+    suggestion: { mode: "exact", value: "Washing machine" } });
+  assert.deepEqual(scanNote(clash), { key: "scan_untitled_clash", name: "Washing machine", line: "The laundry is done" });
+  // without a fitting line (none, computed, too long, or the same as another call's) there is no example
+  assert.deepEqual(scanNote({ ...clash, first_line: null, title_hint: null }), { key: "scan_untitled_clash_noline", name: "Washing machine" });
+  assert.deepEqual(scanNote({ ...clash, first_line: "{% if is_state('binary_sensor.f', 'on') %}", title_hint: null }),
+    { key: "scan_untitled_clash_noline", name: "Washing machine" });
+  assert.deepEqual(scanNote({ ...clash, first_line: "{{ states('sensor.h') }} % humidity", title_hint: null }),
+    { key: "scan_untitled_clash_noline", name: "Washing machine" });
+  // the line itself is never taken as the example: only the center's hint
+  assert.deepEqual(scanNote({ ...clash, title_hint: undefined }), { key: "scan_untitled_clash_noline", name: "Washing machine" });
+  // in a script too
+  assert.deepEqual(scanNote({ ...clash, source: "script", origin: null, suggestion: null, name: "Tell" }),
+    { key: "scan_untitled_clash", name: "Tell", line: "The laundry is done" });
+  // a call with a title in such an automation needs nothing
+  assert.equal(scanNote({ ...clash, title: "Laundry done", suggestion: { mode: "exact", value: "Laundry done" } }), null);
+});
+
+test("the note on several calls without a title, in German and English", () => {
+  const values = { name: "Feuchte Bad", line: "Feuchte im Bad hoch" };
+  assert.equal(fill(makeT("de")("scan_untitled_clash"), values),
+    "Mehrere Meldungen von „Feuchte Bad“ haben keinen eigenen Titel. Sie würden sich auf dem Handy gegenseitig ersetzen. "
+    + "Gib diesem Aufruf einen eigenen Titel, zum Beispiel die erste Zeile seines Textes: „Feuchte im Bad hoch“. "
+    + "Danach erneut suchen und für jeden neuen Titel eine Meldungsart anlegen.");
+  assert.equal(fill(makeT("en")("scan_untitled_clash"), values),
+    "Several messages of “Feuchte Bad” have no title of their own. They would replace each other on the phone. "
+    + "Give this call a title of its own, for example the first line of its text: “Feuchte im Bad hoch”. "
+    + "Then search again and add a message kind for each new title.");
+  assert.equal(fill(makeT("de")("scan_untitled_clash_noline"), values),
+    "Mehrere Meldungen von „Feuchte Bad“ haben keinen eigenen Titel. Sie würden sich auf dem Handy gegenseitig ersetzen. "
+    + "Gib diesem Aufruf einen eigenen Titel. Danach erneut suchen und für jeden neuen Titel eine Meldungsart anlegen.");
+  assert.equal(fill(makeT("en")("scan_untitled_clash_noline"), values),
+    "Several messages of “Feuchte Bad” have no title of their own. They would replace each other on the phone. "
+    + "Give this call a title of its own. Then search again and add a message kind for each new title.");
 });
 
 test("in a script it is called after the automation that starts the script", () => {

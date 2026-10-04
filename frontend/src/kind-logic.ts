@@ -45,7 +45,9 @@ export type Apply = { title_mode: TitleMode; title_value: string } | null;
 /** One message an automation may send, as the dialog lists it. */
 export interface Possible {
   label: string;
-  tag: "fixed" | "computed" | "seen";
+  tag: "fixed" | "computed" | "untitled" | "seen";
+  /** The small text beside it: the sort of title, or for a message without a title the name it is called by. */
+  chip: string;
   apply: Apply;
 }
 
@@ -102,28 +104,56 @@ function fixedPart(display: string): Apply {
   return longest.length >= MIN_FIXED ? { title_mode: "contains", title_value: longest } : null;
 }
 
+/** The messages without a title among those an automation sends: each call without one is a message of its own. */
+const untitledOf = (om: OriginMessages) => om.messages.filter((m) => m.title === null);
+
+/**
+ * True when two or more messages of the automation have no title: all of
+ * them are called after the automation, so on the phone they would replace
+ * each other, and each call needs a title of its own.
+ */
+export const untitledClash = (om: OriginMessages | null | undefined): boolean => !!om && untitledOf(om).length > 1;
+
+/**
+ * The grey line below the possible messages when several have no title: add
+ * the titles first, then the kinds; a condition on the name they share now
+ * would no longer match them afterwards. Null without such a clash.
+ */
+export const clashNote = (t: Translate, om: OriginMessages | null | undefined): string | null =>
+  om && untitledClash(om) ? fill(t("hint_untitled_order"), { name: untitledOf(om)[0].display }) : null;
+
 /**
  * The messages an automation may send: its fixed titles, its computed ones
- * with the placeholder, and the titles that really arrived from it (each
- * once, case aside). Picking one puts its comparison into the condition.
+ * with the placeholder, its calls without a title by the first line of
+ * their text, and the titles that really arrived from it (each once, case
+ * aside). Picking one puts its comparison into the condition. A message
+ * without a title is called after the automation (its `display`): alone it
+ * can be told by that name; two or more share it, so none of them offers
+ * a comparison.
  */
-export function possibleMessages(om: OriginMessages): Possible[] {
+export function possibleMessages(om: OriginMessages, t: Translate): Possible[] {
   const list: Possible[] = [];
   const fixed = new Set<string>();
+  const clash = untitledClash(om);
   for (const m of om.messages) {
     if (m.template) {
-      list.push({ label: m.display, tag: "computed", apply: fixedPart(m.display) });
+      list.push({ label: m.display, tag: "computed", chip: t("possible_computed"), apply: fixedPart(m.display) });
+    } else if (m.title === null) {
+      fixed.add(m.display.toLowerCase());
+      list.push({
+        label: m.first_line ? fill(t("possible_untitled_line"), { line: m.first_line }) : t("possible_untitled"),
+        tag: "untitled", chip: fill(t("possible_called"), { name: m.display }),
+        apply: clash ? null : { title_mode: "exact", title_value: m.display },
+      });
     } else {
-      // a call without a title is called after its automation: display is that name
-      const title = m.title ?? m.display;
-      fixed.add(title.toLowerCase());
-      list.push({ label: m.display, tag: "fixed", apply: { title_mode: "exact", title_value: title } });
+      fixed.add(m.title.toLowerCase());
+      list.push({ label: m.display, tag: "fixed", chip: t("possible_fixed"), apply: { title_mode: "exact", title_value: m.title } });
     }
   }
   for (const title of om.seen_titles) {
     if (fixed.has(title.toLowerCase())) continue;
     fixed.add(title.toLowerCase());
-    list.push({ label: title, tag: "seen", apply: { title_mode: "exact", title_value: title } });
+    list.push({ label: title, tag: "seen", chip: t("possible_seen"), apply: { title_mode: "exact", title_value: title } });
   }
   return list;
 }

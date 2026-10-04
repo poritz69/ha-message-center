@@ -232,6 +232,13 @@ export interface ScanItem {
   suggestion: Suggestion | null;
   /** The automation or script sends several different messages. */
   multiple?: boolean;
+  /** Two or more of its calls have no title: they would replace each other on the phone. */
+  untitled_clash?: boolean;
+  /**
+   * With `untitled_clash`, for a call without a title: an example of a title, the first line of its text when it is
+   * fixed, short and tells the call apart; else null.
+   */
+  title_hint?: string | null;
   file: string | null;
   line: number | null;
   kind: string | null;
@@ -260,6 +267,8 @@ export interface OriginMessage {
   template: boolean;
   /** The title as shown: computed parts as "…", the automation's name for a call without a title. */
   display: string;
+  /** Of a call without a title: the first line of its text (computed parts as "…"), else null. Each such call is a message of its own. */
+  first_line: string | null;
 }
 
 /** Which messages one origin sends (message_center/origin_messages). */

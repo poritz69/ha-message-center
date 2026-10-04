@@ -855,7 +855,7 @@ export class MessageCenterPanel extends LitElement {
             i.title ? nothing : html` <span class="chip">${t("scan_no_title")}${i.first_line ? html`, ${t("scan_first_line")}` : nothing}</span>`}</div>
           <div class="meta">${t("scan_target")}: <code>${i.target}</code>${i.line ? html` · ${t("scan_line")} ${i.line}` : nothing}</div>
           ${i.status === "direct" ? html`<div class="meta scan-todo">${t("scan_change_target")}.</div>` : nothing}
-          ${note ? html`<div class="meta">${fill(t(note.key), { name: note.name ?? "" })}</div>` : nothing}
+          ${note ? html`<div class="meta">${fill(t(note.key), { name: note.name ?? "", line: note.line ?? "" })}</div>` : nothing}
           ${i.source === "script" && i.status !== "persistent" && !i.kind ? html`<div class="meta">${t("scan_script_origin")}</div>` : nothing}
         </div>
         <div class="actions">${i.kind
