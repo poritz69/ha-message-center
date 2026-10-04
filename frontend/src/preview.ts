@@ -27,10 +27,12 @@ import type { Config, Kind, KindMatches, MatchedPair, MessageEntry, Messages, Or
 //   ?tab=settings&dirty=1  the settings with a change not saved yet: "Save" stands where "Test" was
 //   ?tab=rules&rule=new  the dialog of a new delivery rule; rule=help unfolds "What is a mode?", rule=name opens the
 //                        name field of "Create toggle", rule=created creates the toggle and chooses it for the rule
+//   ?choices=<field>     shows that dropdown of a form open, with all its choices (e.g. ?kind=advanced&choices=title_mode)
 const params = new URLSearchParams(location.search);
 document.documentElement.dataset.theme = params.get("theme") === "light" ? "light" : "dark";
 const en = params.get("lang") === "en";
 const only = params.get("only") === "wide" || params.get("only") === "phone" ? params.get("only") : null;
+const choices = params.get("choices");
 
 // ----- stand-ins for Home Assistant elements ---------------------------------
 
@@ -109,6 +111,10 @@ class Form extends LitElement {
     .sw.on { background: color-mix(in srgb, var(--primary-color) 55%, transparent); }
     .sw::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: var(--secondary-text-color); }
     .sw.on::after { left: 18px; background: var(--primary-color); }
+    .menu { margin: -4px 0 10px auto; width: max-content; min-width: 240px; padding: 4px 0; border-radius: 8px;
+      background: var(--secondary-background-color); box-shadow: 0 6px 20px rgba(0, 0, 0, .4); }
+    .menu div { padding: 8px 16px; font-size: 14px; }
+    .menu .on { color: var(--primary-color); background: color-mix(in srgb, var(--primary-color) 14%, transparent); }
   `;
   render() {
     return html`${this.schema.map((f) => {
@@ -119,8 +125,12 @@ class Form extends LitElement {
       const shown = Array.isArray(v) ? `${v.length} ${en ? "selected" : "gewählt"}`
         : options ? (options.find((o) => o.value === String(v ?? ""))?.label ?? (v ? String(v) : "–"))
         : v === "" || v == null ? "–" : String(v);
+      // ?choices=<field>: this dropdown open, as the real one is after a click
+      const menu = choices === f.name && !f.disabled && options
+        ? html`<div class="menu">${options.map((o) => html`<div class=${o.value === String(v ?? "") ? "on" : ""}>${o.label}</div>`)}</div>`
+        : nothing;
       return html`<div class="f ${f.disabled ? "dis" : ""}"><div class="l"><div>${this.computeLabel?.(f) ?? f.name}</div>${helper ? html`<div class="h">${helper}</div>` : nothing}</div>
-        ${"boolean" in f.selector ? html`<span class="sw ${v ? "on" : ""}"></span>` : html`<span class="v">${shown}</span>`}</div>`;
+        ${"boolean" in f.selector ? html`<span class="sw ${v ? "on" : ""}"></span>` : html`<span class="v">${shown}</span>`}</div>${menu}`;
     })}`;
   }
 }
