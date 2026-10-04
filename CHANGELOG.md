@@ -4,7 +4,9 @@ Versions follow `major.minor.patch`. Published interfaces (README, "Interfaces a
 
 From 0.11.1b1 on, every version is a GitHub release. The betas before 1.0 (0.11.1bN) are public test versions: until 1.0 an interface may still change, and such a change is marked **Contract change**. From 1.0.0 on, interfaces are only extended within a major version. The versions up to 0.11.0 were development steps in the author's home without releases.
 
-## Unreleased
+## 0.11.1b2 (2026-10-04)
+
+Second public beta, after the first tester's feedback.
 
 - **Contract change:** a message sent to `notify.message_center` without a title is called after its automation or script (cut to 100 characters), no longer "Mitteilung"; key, `message_id` and the kind it gets follow that title. With an unknown origin it stays "Mitteilung". `send` still needs a title. The name is the one of the origin's state, so a name given in the entity settings wins over the alias. What follows from it:
   - A message kind that waits for "Mitteilung" (from one automation or from any) still takes these messages, with its priority and settings, as long as no kind matches their new title. Better change it to "all messages of this automation".
