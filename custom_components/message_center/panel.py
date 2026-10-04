@@ -8,9 +8,8 @@ from homeassistant.components import frontend
 from homeassistant.components.http import StaticPathConfig
 from homeassistant.core import HomeAssistant
 
-from .const import DOMAIN
+from .const import DOMAIN, PANEL_URL_PATH
 
-PANEL_URL_PATH = "message-center"
 STATIC_URL = f"/{DOMAIN}/frontend"
 FRONTEND_DIR = Path(__file__).parent / "frontend"
 PANEL_FILE = "message-center-panel.js"

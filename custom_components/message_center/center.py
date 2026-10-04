@@ -66,6 +66,7 @@ from .const import (
     CONF_SNOOZE_INPUT,
     CONF_SNOOZE_MINUTES,
     CONF_SNOOZE_MINUTES_2,
+    CONF_TAP_TARGET,
     DEFAULT_ALARM_CHANNEL,
     DEFAULT_ALARM_INTERVAL_MS,
     DEFAULT_ALARM_MAX_SECONDS,
@@ -74,6 +75,7 @@ from .const import (
     DEFAULT_LIGHT_SPACING,
     DEFAULT_PULSE_MS,
     DEFAULT_SNOOZE_MINUTES,
+    DEFAULT_TAP_TARGET,
     DEFAULT_TITLE,
     DOMAIN,
     EVENT_DELIVERED,
@@ -86,6 +88,7 @@ from .const import (
     MAX_EFFECT_CONTEXTS,
     MAX_SEEN_TITLES,
     MAX_UNKNOWN,
+    PANEL_URL_PATH,
     PLATFORM_ANDROID,
     RECIPIENT_REPAIR_AFTER,
     SCRIPT_TIMEOUT,
@@ -94,10 +97,18 @@ from .const import (
     SUBENTRY_GROUP,
     SUBENTRY_KIND,
     SUBENTRY_RULE,
+    TAP_TARGET_CENTER,
+    TAP_TARGETS,
     TEST_ORIGIN,
     TITLE_MAX_LENGTH,
 )
-from .delivery import Recipient, async_push, async_push_tts, error_trace
+from .delivery import (
+    Recipient,
+    async_push,
+    async_push_tts,
+    error_trace,
+    phone_user_id,
+)
 from .kinds import Group, Kind, match_kind
 from .lifecycle import (
     RULE_REASONS,
@@ -128,6 +139,7 @@ from .texts import (
     failing_text,
     reason_text,
     test_texts,
+    unclassified_note,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -205,6 +217,7 @@ class MessageCenter:
         self.snooze_minutes = DEFAULT_SNOOZE_MINUTES
         self.snooze_minutes_2 = 0  # second "later" button, 0 = none
         self.snooze_input = False  # typed minutes instead of fixed durations
+        self.tap_target = DEFAULT_TAP_TARGET  # what a tap on the push opens
         self.ready = False
         self.ready_reason = "starting"
         self.last_delivery: tuple[datetime, str, str] | None = None
@@ -373,6 +386,10 @@ class MessageCenter:
         )
         self.snooze_minutes_2 = int(options.get(CONF_SNOOZE_MINUTES_2, 0))
         self.snooze_input = bool(options.get(CONF_SNOOZE_INPUT, False))
+        tap_target = str(options.get(CONF_TAP_TARGET, DEFAULT_TAP_TARGET))
+        self.tap_target = (
+            tap_target if tap_target in TAP_TARGETS else DEFAULT_TAP_TARGET
+        )
         kinds: dict[str, Kind] = {}
         groups: dict[str, Group] = {}
         rules: list[RuleConfig] = []
@@ -1237,9 +1254,12 @@ class MessageCenter:
         }
 
     async def _push(self, msg: Message, name: str, *, silent: bool) -> str | None:
+        unclassified = self.unclassified(msg)
+        recipient = self._recipient(name)
+        tap_url = self._tap_url(msg, unclassified=unclassified)
         return await async_push(
             self.hass,
-            self._recipient(name),
+            recipient,
             msg,
             self._context_for(msg),
             group_name=self.group_name(msg),
@@ -1247,7 +1267,49 @@ class MessageCenter:
             silent=silent and self.silent_repeat,
             actions=self._push_actions(msg),
             alarm_channel=self.alarm_channel,
+            tap_url=await self._page_target(recipient, tap_url),
+            note=unclassified_note(self.language) if unclassified else None,
         )
+
+    async def _page_target(self, recipient: Recipient, url: str | None) -> str | None:
+        """Keep a target on the page only for the phone of an administrator.
+
+        The page is for administrators only. The phone of another user, or
+        one whose user is not known, gets no target and opens Home Assistant
+        as before; the note on an unclassified message stays.
+        """
+        if url is None:
+            return None
+        user_id = phone_user_id(self.hass, recipient.action)
+        user = await self.hass.auth.async_get_user(user_id) if user_id else None
+        return url if user is not None and user.is_admin else None
+
+    def unclassified(self, msg: Message) -> bool:
+        """Tell whether no kind takes the message, now, as "new" counts it.
+
+        It got none at intake and none matches it yet. Decided at each push:
+        a message classified while it waits goes out as classified.
+        """
+        return msg.kind_id is None and (
+            match_kind(list(self.kinds.values()), msg.origin, msg.title) is None
+        )
+
+    def _tap_url(
+        self, msg: Message | None, *, unclassified: bool = False
+    ) -> str | None:
+        """Return what a tap on the push opens; None leaves it to the app.
+
+        An unclassified message opens the dialog to classify it, whatever
+        the option says; with "center" any other opens the page on it. A
+        test push (``msg`` None) opens the page itself. Only phones of
+        administrators keep the target (``_page_target``).
+        """
+        page = f"/{PANEL_URL_PATH}"
+        if msg is not None and unclassified:
+            return f"{page}?classify={msg.id}"
+        if self.tap_target != TAP_TARGET_CENTER:
+            return None
+        return page if msg is None else f"{page}?message={msg.id}"
 
     async def _async_announce(self, msg: Message) -> None:
         """Priority 3 with the option: read the title aloud on the Android phones."""
@@ -1579,7 +1641,8 @@ class MessageCenter:
         Priority 2 pulses the lamps that are on, ignoring the spacing. Push,
         script and lamps run in a context of the center's own below the
         administrator's ``context``: what the script sends back is known as
-        the center's own effect.
+        the center's own effect. With the option "center" a tap on it opens
+        the page itself, on the phones of administrators.
         """
         if not self.ready:
             raise NotReadyError(self.ready_reason)
@@ -1597,20 +1660,21 @@ class MessageCenter:
             accepted_at=now,
             updated_at=now,
         )
-        results = await asyncio.gather(
-            *(
-                async_push(
-                    self.hass,
-                    recipient,
-                    msg,
-                    effect,
-                    group_name=None,
-                    language=self.language,
-                    alarm_channel=self.alarm_channel,
-                )
-                for recipient in self.recipients
+        page = self._tap_url(None)
+
+        async def push(recipient: Recipient) -> str | None:
+            return await async_push(
+                self.hass,
+                recipient,
+                msg,
+                effect,
+                group_name=None,
+                language=self.language,
+                alarm_channel=self.alarm_channel,
+                tap_url=await self._page_target(recipient, page),
             )
-        )
+
+        results = await asyncio.gather(*(push(r) for r in self.recipients))
         if priority == 3 and self.alarm_tts:
             self._launch(self._async_announce(msg), "announce test")
         script = self.effect_scripts.get(priority)

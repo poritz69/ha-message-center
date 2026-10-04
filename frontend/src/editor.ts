@@ -82,6 +82,11 @@ export class MessageCenterEditor extends LitElement {
     if (changed.has("data")) this._data = this.data;
   }
 
+  /** Whether something was entered since the dialog opened (each change makes a new copy). */
+  get edited(): boolean {
+    return this._data !== this.data;
+  }
+
   static styles = [fallbackStyles, css`
     .error { color: var(--error-color); margin-top: 8px; }
   `];

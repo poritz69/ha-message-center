@@ -111,6 +111,16 @@ def duration_text(minutes: int, language: str) -> str:
     return f"{minutes} min"
 
 
+def unclassified_note(language: str) -> str:
+    """Line at the end of the push of a message no kind takes (push only).
+
+    The dash is the typographic one of the wording, not a hyphen.
+    """
+    if language.startswith("de"):
+        return "⚠ Noch nicht eingeordnet – bitte im Message Center bewerten"  # noqa: RUF001
+    return "⚠ Not classified yet – please classify it in Message Center"  # noqa: RUF001
+
+
 def failing_text(language: str, count: int) -> str:
     """Text of the notification shown while deliveries fail."""
     if language.startswith("de"):

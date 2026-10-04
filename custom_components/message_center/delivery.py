@@ -31,6 +31,7 @@ from .const import (
     RECIPIENT_PLATFORM,
     RECIPIENT_TYPE,
     RECIPIENT_TYPE_MOBILE_APP,
+    TAP_KEYS,
 )
 from .models import Message
 
@@ -98,6 +99,41 @@ def discover_mobile_apps(hass: HomeAssistant) -> list[Recipient]:
     return sorted(found, key=lambda r: r.name.lower())
 
 
+def phone_user_id(hass: HomeAssistant, action: str) -> str | None:
+    """Return the user a Companion App phone belongs to, by its notify action.
+
+    The action is named after the phone as the app registered it, or as the
+    device registry shows it (the way the phones are found). None when no
+    registration of the Companion App has that action.
+    """
+    registry = dr.async_get(hass)
+    for entry in hass.config_entries.async_entries("mobile_app"):
+        names = {str(entry.data.get("device_name") or "")}
+        names.update(
+            device.name_by_user or device.name or ""
+            for device in dr.async_entries_for_config_entry(registry, entry.entry_id)
+        )
+        if any(name and f"mobile_app_{slugify(name)}" == action for name in names):
+            user_id = entry.data.get("user_id")
+            return str(user_id) if user_id else None
+    return None
+
+
+def own_tap_target(data: dict[str, Any]) -> bool:
+    """Tell whether the caller's data names a tap target of its own.
+
+    ``clickAction`` (Android) or ``url`` (iOS) counts; a key that is
+    ``None`` or blank text names none: blueprints and templates pass such
+    a value when no target was chosen, and the app then opens Home Assistant.
+    """
+    for key in TAP_KEYS:
+        value = data.get(key)
+        if value is None or (isinstance(value, str) and not value.strip()):
+            continue
+        return True
+    return False
+
+
 def error_trace(err: BaseException) -> str:
     """Class and call stack of an exception for the log, without its text.
 
@@ -117,14 +153,22 @@ def build_push_data(
     silent: bool = False,
     actions: list[dict[str, Any]] | None = None,
     alarm_channel: str = DEFAULT_ALARM_CHANNEL,
+    tap_url: str | None = None,
 ) -> dict[str, Any]:
     """Push data: caller's data passed through, ours layered on top.
 
     Buttons: the caller's own first, then the center's. "End alarm"
     stands third at the latest, because Android shows three buttons at
     most; what is behind it stays in the list for the iPhone.
+
+    ``tap_url``: what a tap on the push opens, as ``clickAction`` on
+    Android and ``url`` on iOS. A caller that put a target into either key
+    chose one of its own; then the center adds none, on neither platform.
+    An empty key (``None`` or blank text) is no target and is overwritten.
     """
     data: dict[str, Any] = dict(msg.data)
+    if tap_url and not own_tap_target(data):
+        data["url" if recipient.is_apple else "clickAction"] = tap_url
     data["tag"] = msg.id
     data["group"] = group_name or msg.origin
     alarm = msg.priority >= 3
@@ -166,17 +210,21 @@ async def async_push(
     silent: bool = False,
     actions: list[dict[str, Any]] | None = None,
     alarm_channel: str = DEFAULT_ALARM_CHANNEL,
+    tap_url: str | None = None,
+    note: str | None = None,
 ) -> str | None:
     """Send the message to one recipient; return None or an error class.
 
     Building the push counts as part of it: data of the caller that does not
     fit (``actions`` that is no list) is an error of this push, not a crash.
+    ``note`` follows the text after a blank line, in the push only; the
+    message keeps its text.
     """
     try:
         payload = {
             # a repeat replaces the push (same tag), the counter is in the title
             "title": f"{msg.count}x {msg.title}" if msg.count > 1 else msg.title,
-            "message": msg.message,
+            "message": f"{msg.message}\n\n{note}" if note else msg.message,
             "data": build_push_data(
                 msg,
                 recipient,
@@ -185,6 +233,7 @@ async def async_push(
                 silent=silent,
                 actions=actions,
                 alarm_channel=alarm_channel,
+                tap_url=tap_url,
             ),
         }
         async with asyncio.timeout(PUSH_TIMEOUT):

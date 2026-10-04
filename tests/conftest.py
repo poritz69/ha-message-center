@@ -237,9 +237,14 @@ def auto_enable_custom_integrations(enable_custom_integrations: None) -> None:
 
 
 @pytest.fixture
-def phone(hass: HomeAssistant) -> list[ServiceCall]:
-    """Create a Companion App device with a notify action; return its calls."""
-    mobile_entry = MockConfigEntry(domain="mobile_app", data={})
+def phone(hass: HomeAssistant, hass_admin_user: Any) -> list[ServiceCall]:
+    """Create a Companion App device with a notify action; return its calls.
+
+    The phone belongs to an administrator, as the app registers it.
+    """
+    mobile_entry = MockConfigEntry(
+        domain="mobile_app", data={"user_id": hass_admin_user.id}
+    )
     mobile_entry.add_to_hass(hass)
     dr.async_get(hass).async_get_or_create(
         config_entry_id=mobile_entry.entry_id,

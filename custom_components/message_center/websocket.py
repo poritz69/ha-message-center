@@ -49,6 +49,7 @@ from .const import (
     CONF_SNOOZE_INPUT,
     CONF_SNOOZE_MINUTES,
     CONF_SNOOZE_MINUTES_2,
+    CONF_TAP_TARGET,
     DOMAIN,
     HISTORY_DAYS_MAX,
     LIGHT_DOMAINS,
@@ -60,6 +61,7 @@ from .const import (
     SUBENTRY_GROUP,
     SUBENTRY_KIND,
     SUBENTRY_RULE,
+    TAP_TARGETS,
 )
 from .delivery import discover_mobile_apps
 from .kinds import (
@@ -669,6 +671,7 @@ OPTIONS_SCHEMA = vol.Schema(
             int, vol.Range(min=0, max=SNOOZE_MINUTES_MAX)
         ),
         vol.Optional(CONF_SNOOZE_INPUT): bool,
+        vol.Optional(CONF_TAP_TARGET): vol.In(TAP_TARGETS),
     }
 )
 

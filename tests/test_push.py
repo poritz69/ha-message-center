@@ -304,3 +304,101 @@ async def test_unexpected_push_error_logs_class_and_stack_without_content(
     assert 'File "' in caplog.text and "in async_push" in caplog.text
     assert "Finished." not in caplog.text
     assert "Laundry" not in caplog.text
+
+
+# ----- what a tap on the push opens --------------------------------------------
+
+PAGE = f"/message-center?message={MID}"
+
+
+def test_tap_target_is_set_per_platform() -> None:
+    """The target goes to clickAction on Android and to url on iOS; none without one."""
+    android = build_push_data(
+        message(), ANDROID, group_name=None, language="en", tap_url=PAGE
+    )
+    assert android["clickAction"] == PAGE
+    assert "url" not in android
+
+    apple = build_push_data(
+        message(), APPLE, group_name=None, language="en", tap_url=PAGE
+    )
+    assert apple["url"] == PAGE
+    assert "clickAction" not in apple
+
+    for recipient in (ANDROID, APPLE):
+        plain = build_push_data(message(), recipient, group_name=None, language="en")
+        assert "clickAction" not in plain
+        assert "url" not in plain
+
+
+def test_own_tap_target_of_the_caller_wins() -> None:
+    """A target the caller set, for either platform, is kept; none is added.
+
+    ``clickAction`` (Android) and ``url`` (iOS) both count as the caller's
+    choice: a sender that names a target for one platform gets no target of
+    Message Center on the other.
+    """
+    cases = [
+        (ANDROID, {"clickAction": "/lovelace/garden"}),
+        (ANDROID, {"url": "/lovelace/garden"}),
+        (APPLE, {"url": "/lovelace/garden"}),
+        (APPLE, {"clickAction": "/lovelace/garden"}),
+    ]
+    for recipient, own in cases:
+        data = build_push_data(
+            message(**own), recipient, group_name=None, language="en", tap_url=PAGE
+        )
+        assert {k: data.get(k) for k in ("clickAction", "url") if k in data} == own
+
+
+def test_empty_tap_target_of_the_caller_is_no_target() -> None:
+    """An empty key is no choice of the caller: Message Center sets its target.
+
+    Blueprints and templates often pass ``clickAction: ""`` or ``url: null``
+    when no target was chosen; the Companion App then opens Home Assistant.
+    """
+    for own in (
+        {"clickAction": ""},
+        {"clickAction": "   "},
+        {"url": None},
+        {"clickAction": None, "url": ""},
+    ):
+        android = build_push_data(
+            message(**own), ANDROID, group_name=None, language="en", tap_url=PAGE
+        )
+        assert android["clickAction"] == PAGE, own
+        apple = build_push_data(
+            message(**own), APPLE, group_name=None, language="en", tap_url=PAGE
+        )
+        assert apple["url"] == PAGE, own
+    # an empty key next to a real target of the caller: the caller's target wins
+    data = build_push_data(
+        message(clickAction="", url="/lovelace/garden"),
+        ANDROID,
+        group_name=None,
+        language="en",
+        tap_url=PAGE,
+    )
+    assert (data["clickAction"], data["url"]) == ("", "/lovelace/garden")
+
+
+async def test_note_goes_into_the_push_only(hass: HomeAssistant) -> None:
+    """A note follows the pushed text after a blank line; the message keeps its text."""
+    calls = async_mock_service(hass, "notify", ANDROID.action)
+    msg = message()
+    assert (
+        await async_push(
+            hass,
+            ANDROID,
+            msg,
+            Context(),
+            group_name=None,
+            language="en",
+            note="⚠ Not classified yet",
+            tap_url=PAGE,
+        )
+        is None
+    )
+    assert calls[0].data["message"] == "Finished.\n\n⚠ Not classified yet"
+    assert calls[0].data["data"]["clickAction"] == PAGE
+    assert msg.message == "Finished."

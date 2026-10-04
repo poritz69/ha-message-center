@@ -190,6 +190,8 @@ export interface Options {
   snooze_minutes?: number;
   snooze_minutes_2?: number;
   snooze_input?: boolean;
+  /** What a tap on the push opens: Home Assistant as the app shows it, or this page with the message. */
+  tap_target?: "home" | "center";
   /** Targets from `lights` that pulse even when off (on, then off again). */
   lights_always?: string[];
   /** Script that runs on "to assistant" with the message as variables. */

@@ -13,6 +13,7 @@ import "./editor";
 import "./flow";
 import "./kind-editor";
 import { conditionLabel, forOrigin, type KindSource } from "./kind-logic";
+import { readDeepLink, resolveDeepLink, rowKey, withoutDeepLink } from "./deep-link";
 import { icon } from "./icons";
 import type { Field, FormData } from "./editor";
 
@@ -50,10 +51,12 @@ export class MessageCenterPanel extends LitElement {
   @state() private _settings?: Options;
   @state() private _settingsNote = "";
   @state() private _testNote = "";
+  /** A short note above the tab, such as for a link to a message that is gone; cleared on the next tab. */
+  @state() private _notice = "";
   /** Id of the kind being dragged and the card it hovers. */
   @state() private _dragKind = "";
   @state() private _dropTarget = "";
-  /** Ids of the message rows that are unfolded; kept here so that refreshes do not fold them. */
+  /** Rows (`rowKey`: id and generation) that are unfolded; kept here so that refreshes do not fold them. */
   @state() private _openRows = new Set<string>();
   /** Result of the search over the house; shown on the kinds tab until closed. */
   @state() private _scan?: ScanResult;
@@ -279,20 +282,32 @@ export class MessageCenterPanel extends LitElement {
     .toolbar input, .toolbar select { padding: 8px; font: inherit; border-radius: 6px; border: 1px solid var(--divider-color);
       background: var(--card-background-color); color: var(--primary-text-color); }
     .error { color: var(--error-color); padding: 8px 0; }
+    .notice { display: flex; align-items: center; gap: 8px; margin: 0 0 12px; padding: 8px 12px; border-radius: 8px; font-size: 14px;
+      background: color-mix(in srgb, var(--warning-color) 14%, transparent); color: var(--primary-text-color); }
+    .notice .ico { color: var(--mc-warn); }
     .count { font-weight: 600; }
     a { color: var(--primary-color); }
   `;
 
   connectedCallback() {
     super.connectedCallback();
+    // a tapped push may lead here while the page is open: Home Assistant then changes the address only
+    window.addEventListener("location-changed", this._onLocation);
+    window.addEventListener("popstate", this._onLocation);
     void this._start();
   }
 
   disconnectedCallback() {
     super.disconnectedCallback();
+    window.removeEventListener("location-changed", this._onLocation);
+    window.removeEventListener("popstate", this._onLocation);
     void this._unsub?.();
     this._unsub = undefined;
   }
+
+  private _onLocation = () => {
+    if (readDeepLink(location.search)) void this._followLink(true);
+  };
 
   protected updated(changed: Map<string, unknown>) {
     // Rebuild the translator only when the language changes, not on every state update.
@@ -308,11 +323,77 @@ export class MessageCenterPanel extends LitElement {
     this._t = makeT(this._lang);
     await ensureHaElements();
     await this._refresh();
+    await this._followLink();
     try {
       this._unsub = await subscribe(this.hass, () => void this._refresh());
     } catch (err) {
       this._error = (err as { message?: string }).message ?? String(err);
     }
+  }
+
+  /**
+   * A tapped push opened the page as "?message=<id>" (show the message,
+   * unfolded) or "?classify=<id>" (classify its entry of "New"; when that is
+   * gone, show the message). The link leaves the address first, so that a
+   * reload or a later visit does not follow it again. Of a message that came
+   * back several times the newest generation is shown; the filters of the
+   * history are cleared, so that it shows. A message the page cannot find
+   * leaves the page as it is, with a note. An open dialog is closed, unless
+   * it holds unsaved input: then it stays, and the message is only shown
+   * behind it.
+   */
+  private async _followLink(refresh = false) {
+    const link = readDeepLink(location.search);
+    if (!link) return;
+    try {
+      history.replaceState(history.state, "", location.pathname + withoutDeepLink(location.search) + location.hash);
+    } catch { /* the address keeps the link; it is followed all the same */ }
+    if (refresh) await this._refresh();
+    const keep = this._dialogEdited();
+    const wanted = keep ? { ...link, mode: "message" as const } : link;
+    const open = this._messages?.open ?? [];
+    const recent = this._messages?.recent ?? [];
+    const unknown = this._overview?.unknown ?? [];
+    let target = resolveDeepLink(wanted, open, recent, unknown);
+    if (target.action === "missing") {
+      let older: MessageEntry[];
+      try {
+        older = (await fetchHistory(this.hass)).history;
+      } catch {
+        return; // the history could not be read: the message may be there, say nothing
+      }
+      this._history = older;
+      target = resolveDeepLink(wanted, open, [...recent, ...older], unknown);
+    }
+    if (target.action === "missing") {
+      this._notice = this._t("link_missing");
+      return;
+    }
+    if (!keep) {
+      this._editor = undefined;
+      this._kindSource = undefined;
+    }
+    if (target.action === "classify") {
+      await this._select("overview");
+      this._openKindEditor({ from: "new", item: target.item });
+      return;
+    }
+    await this._select(target.tab);
+    if (target.tab === "history") {
+      this._filterGroup = "";
+      this._filterKind = "";
+      this._search = "";
+    }
+    this._openRows = new Set([...this._openRows, target.key]);
+    await this.updateComplete;
+    this.shadowRoot?.querySelector(`details[data-key="${target.key}"]`)?.scrollIntoView({ block: "center" });
+  }
+
+  /** Whether an open dialog holds input that was not saved. */
+  private _dialogEdited(): boolean {
+    const dialog = this.shadowRoot?.querySelector<HTMLElement & { edited?: boolean }>(
+      "message-center-editor, message-center-kind-editor");
+    return !!dialog?.edited;
   }
 
   private async _refresh() {
@@ -363,6 +444,7 @@ export class MessageCenterPanel extends LitElement {
           <ha-button appearance="filled" @click=${this._alarmOff}>${t("alarm_end")}</ha-button>
         </div>` : nothing}
         ${this._error ? html`<div class="error">${this._error}</div>` : nothing}
+        ${this._notice ? html`<div class="notice">${icon("alert", 16)}<span>${this._notice}</span></div>` : nothing}
         ${this._renderTab()}
       </main>
       ${this._editor ? html`<message-center-editor .hass=${this.hass} .t=${t} .heading=${this._editor.heading}
@@ -378,6 +460,7 @@ export class MessageCenterPanel extends LitElement {
 
   private async _select(tab: Tab) {
     this._tab = tab;
+    this._notice = "";
     if (tab === "history" && !this._history) {
       try { this._history = (await fetchHistory(this.hass)).history; } catch { /* shown on refresh */ }
     }
@@ -394,7 +477,7 @@ export class MessageCenterPanel extends LitElement {
       alarm_lights: o.alarm_lights ?? [], alarm_interval_ms: o.alarm_interval_ms ?? 1000, alarm_max_seconds: o.alarm_max_seconds ?? 300,
       alarm_test_seconds: o.alarm_test_seconds ?? 5, silent_repeat: o.silent_repeat ?? false,
       alarm_channel: o.alarm_channel ?? "alarm_stream", alarm_tts: o.alarm_tts ?? false,
-      button_snooze: o.button_snooze ?? true,
+      button_snooze: o.button_snooze ?? true, tap_target: o.tap_target ?? "home",
       button_forward: o.button_forward ?? true, snooze_minutes: o.snooze_minutes ?? 30,
       snooze_minutes_2: o.snooze_minutes_2 ?? 0, snooze_input: o.snooze_input ?? false,
       lights_always: o.lights_always ?? [], forward_script: o.forward_script ?? "",
@@ -519,16 +602,16 @@ export class MessageCenterPanel extends LitElement {
       ${this._intro("intro_history")}
       <div class="toolbar">
         <select @change=${(e: Event) => { this._filterGroup = (e.target as HTMLSelectElement).value; }}>
-          <option value="">${t("all_groups")}</option>
-          <option value="-">${t("no_group")}</option>
-          ${groups.map((g) => html`<option value=${g.name}>${g.name}</option>`)}
+          <option value="" ?selected=${!this._filterGroup}>${t("all_groups")}</option>
+          <option value="-" ?selected=${this._filterGroup === "-"}>${t("no_group")}</option>
+          ${groups.map((g) => html`<option value=${g.name} ?selected=${this._filterGroup === g.name}>${g.name}</option>`)}
         </select>
         <select @change=${(e: Event) => { this._filterKind = (e.target as HTMLSelectElement).value; }}>
-          <option value="">${t("all_kinds")}</option>
-          <option value="-">${t("no_kind")}</option>
-          ${kinds.map((k) => html`<option value=${k.name}>${k.name}</option>`)}
+          <option value="" ?selected=${!this._filterKind}>${t("all_kinds")}</option>
+          <option value="-" ?selected=${this._filterKind === "-"}>${t("no_kind")}</option>
+          ${kinds.map((k) => html`<option value=${k.name} ?selected=${this._filterKind === k.name}>${k.name}</option>`)}
         </select>
-        <input type="search" placeholder=${t("search")} @input=${(e: Event) => { this._search = (e.target as HTMLInputElement).value; }} />
+        <input type="search" placeholder=${t("search")} .value=${this._search} @input=${(e: Event) => { this._search = (e.target as HTMLInputElement).value; }} />
       </div>
       <ha-card .header=${t("recent")}>
         ${r.length === 0 ? html`<div class="empty">${t("history_empty")}</div>` : this._renderTable(r, false)}
@@ -547,10 +630,10 @@ export class MessageCenterPanel extends LitElement {
     </div>`;
   }
 
-  private _rowToggled(id: string, isOpen: boolean) {
-    if (this._openRows.has(id) === isOpen) return;
+  private _rowToggled(row: string, isOpen: boolean) {
+    if (this._openRows.has(row) === isOpen) return;
     const next = new Set(this._openRows);
-    if (isOpen) next.add(id); else next.delete(id);
+    if (isOpen) next.add(row); else next.delete(row);
     this._openRows = next;
   }
 
@@ -560,11 +643,12 @@ export class MessageCenterPanel extends LitElement {
     const cls = st === "delivered" ? "ok" : st === "failed" ? "fail" : st === "discarded" ? "drop" : "wait";
     const stIcon = STATE_ICON[st] ?? "clock";
     const origin = e.origin_name ?? (e.origin === "unknown" ? t("unknown_origin") : e.origin);
-    const unfolded = this._openRows.has(e.message_id);
+    const row = rowKey(e);
+    const unfolded = this._openRows.has(row);
     // the reason repeats the state for plain end states ("delivered", "discarded"): say it once
     const reason = !open && e.delivered_at ? this._time(e.delivered_at) : e.reason.toLowerCase() === t(st).toLowerCase() ? "" : e.reason;
-    return html`<details class="msg s-${cls} l${e.priority}" ?open=${unfolded}
-      @toggle=${(ev: Event) => this._rowToggled(e.message_id, (ev.currentTarget as HTMLDetailsElement).open)}>
+    return html`<details class="msg s-${cls} l${e.priority}" data-key=${row} ?open=${unfolded}
+      @toggle=${(ev: Event) => this._rowToggled(row, (ev.currentTarget as HTMLDetailsElement).open)}>
       <summary>
         <span class="lvbox" title=${t(`p${e.priority}`)}>${e.priority}</span>
         <span class="stc" title=${t(st)}>${icon(stIcon, 18)}<span>${t(st)}</span></span>
@@ -1013,6 +1097,8 @@ export class MessageCenterPanel extends LitElement {
     ];
     const alarmHelpers: Record<string, string> = { alarm_lights: t("alarm_lights_helper"), alarm_channel: t("alarm_channel_helper") };
     const buttonFields: Field[] = [
+      { name: "tap_target", required: true, selector: { select: { mode: "dropdown", options: [
+        { value: "home", label: t("tap_target_home") }, { value: "center", label: t("tap_target_center") }] } } },
       { name: "button_snooze", selector: { boolean: {} } },
       { name: "snooze_minutes", required: true, selector: { number: { min: 1, max: 10080, mode: "box", unit_of_measurement: "min" } } },
       { name: "snooze_minutes_2", selector: { number: { min: 0, max: 10080, mode: "box", unit_of_measurement: "min" } } },
@@ -1020,6 +1106,8 @@ export class MessageCenterPanel extends LitElement {
       { name: "button_forward", selector: { boolean: {} } },
       { name: "forward_script", selector: { entity: { domain: "script" } } },
     ];
+    const buttonHelpers: Record<string, string> = {
+      tap_target: t("tap_target_helper"), snooze_input: t("snooze_input_helper"), forward_script: t("forward_script_helper") };
     const optionFields: Field[] = [
       { name: "history_days", required: true, selector: { number: { min: 1, max: 365, mode: "box", unit_of_measurement: "d" } } },
       { name: "sidebar", selector: { boolean: {} } },
@@ -1057,7 +1145,7 @@ export class MessageCenterPanel extends LitElement {
         <div class="empty">${t("buttons_intro")}</div>
         <div class="form">
           <ha-form .hass=${this.hass} .schema=${buttonFields} .data=${data}
-            .computeLabel=${(f: Field) => t(f.name)} .computeHelper=${(f: Field) => f.name === "snooze_input" ? t("snooze_input_helper") : f.name === "forward_script" ? t("forward_script_helper") : undefined}
+            .computeLabel=${(f: Field) => t(f.name)} .computeHelper=${(f: Field) => buttonHelpers[f.name]}
             @value-changed=${onChange}></ha-form>
         </div>
       </ha-card>
@@ -1119,7 +1207,7 @@ export class MessageCenterPanel extends LitElement {
         alarm_lights: s.alarm_lights ?? [], alarm_interval_ms: Number(s.alarm_interval_ms ?? 1000),
         alarm_max_seconds: Number(s.alarm_max_seconds ?? 300), alarm_test_seconds: Number(s.alarm_test_seconds ?? 5),
         silent_repeat: !!s.silent_repeat, alarm_channel: String(s.alarm_channel ?? "alarm_stream"), alarm_tts: !!s.alarm_tts,
-        button_snooze: s.button_snooze !== false,
+        button_snooze: s.button_snooze !== false, tap_target: s.tap_target === "center" ? "center" : "home",
         button_forward: s.button_forward !== false, snooze_minutes: Number(s.snooze_minutes ?? 30),
         snooze_minutes_2: Number(s.snooze_minutes_2 ?? 0), snooze_input: !!s.snooze_input,
         lights_always: s.lights_always ?? [], forward_script: s.forward_script || null,

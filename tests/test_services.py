@@ -26,6 +26,8 @@ from .conftest import PHONE_ACTION, kind_data
 
 TITLE = "Feuchte: Büro"
 TEXT = "Bitte lüften, 72 %."
+# what the push of a message no kind takes carries after its text (English system)
+NOTE = "\n\n⚠ Not classified yet – please classify it in Message Center"  # noqa: RUF001
 
 
 def message_id_of(
@@ -53,14 +55,21 @@ def open_items(hass: HomeAssistant) -> list[dict[str, Any]]:
 async def test_notify_is_delivered_and_visible(
     hass: HomeAssistant, phone: list[ServiceCall], center_entry: MockConfigEntry
 ) -> None:
-    """A plain notify goes out with tag and group; unknown origin and kind are shown."""
+    """A plain notify goes out with tag and group; unknown origin and kind are shown.
+
+    No kind takes it: the push says so below the text, and a tap opens the
+    dialog to classify it.
+    """
     events = async_capture_events(hass, EVENT_DELIVERED)
     await notify(hass)
     assert len(phone) == 1
     call = phone[0]
     assert call.data["title"] == TITLE
-    assert call.data["message"] == TEXT
+    assert call.data["message"] == TEXT + NOTE
     assert call.data["data"]["tag"] == message_id_of(hass)
+    assert call.data["data"]["clickAction"] == (
+        f"/message-center?classify={message_id_of(hass)}"
+    )
     assert call.data["data"]["group"] == "unknown"
     assert call.data["data"]["channel"] == "message_center"
     assert "subtitle" not in call.data["data"]

@@ -139,3 +139,16 @@ CONF_EFFECT_SCRIPTS: Final = ("effect_script_1", "effect_script_2", "effect_scri
 SCRIPT_TIMEOUT: Final = 30
 # Lamps and switches that pulse even when off (short on, then off again)
 CONF_LIGHTS_ALWAYS: Final = "lights_always"
+# What a tap on the push opens (option tap_target): "home" leaves it to the
+# Companion App, "center" opens the page with the message. A message no kind
+# takes opens the dialog to classify it either way. A target in the sender's
+# data (clickAction for Android, url for iOS) always wins; an empty one (None
+# or blank text) is none. Targets on the page go to phones of administrators.
+CONF_TAP_TARGET: Final = "tap_target"
+TAP_TARGET_HOME: Final = "home"
+TAP_TARGET_CENTER: Final = "center"
+TAP_TARGETS: Final = (TAP_TARGET_HOME, TAP_TARGET_CENTER)
+DEFAULT_TAP_TARGET: Final = TAP_TARGET_HOME
+TAP_KEYS: Final = ("clickAction", "url")
+# address of the page in the sidebar
+PANEL_URL_PATH: Final = "message-center"

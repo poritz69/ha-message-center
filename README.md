@@ -212,7 +212,7 @@ All settings live on the page in the sidebar. This is a deliberate choice: the p
 | **Settings → priority → effect** | Per priority: an optional script (see [Scripts](#scripts-own-effect-and-forwarding)) and a **Test** button that sends a test push without any record. |
 | **Settings → light pulse** | Lights and switches that pulse for priority 2; which of them pulse even when off; off time (100–10 000 ms, default 500); minimum spacing between pulses (0–600 s, default 0). |
 | **Settings → alarm** | Lights and switches for the alarm light; interval (100–5000 ms, default 1000); maximum duration (5–3600 s, default 300); test duration; Android alarm channel; spoken announcement of the title (Android). Do not choose a lamp that is itself the trigger of a message of priority 3 (an automation reporting that lamp): every step of the alarm would then produce a new message and a push for as long as the alarm runs. |
-| **Settings → buttons on the push** | "Later" (one or two fixed durations, or typed minutes), "To assistant", and a script to run when a message is forwarded. |
+| **Settings → buttons on the push** | What a tap on the push opens (Home Assistant, the default, or Message Center with the message; see [Tapping the push](#tapping-the-push)); "Later" (one or two fixed durations, or typed minutes), "To assistant", and a script to run when a message is forwarded. |
 | **Settings → options** | History retention (1–365 days, default 30); sidebar entry on/off; keep titles out of history and attributes (then also out of the events, the logbook and the push `tag`); allow priority 3 through `message_center.send`; replace repeats silently. |
 
 The other two tabs show what is going on: **Open** (everything not finished yet, with state, reason and deadline, and the buttons *send now*, *discard*, *later*, *to assistant*) and **History** (delivered, discarded and failed messages with their interventions). *Send now* also works on a message that is retrying: the recipients that do not have it yet are tried at once, whether a rule holds the retry back or its next time lies ahead.
@@ -221,7 +221,7 @@ The other two tabs show what is going on: **Open** (everything not finished yet,
 
 Only what is listed here is meant to be used by automations and other integrations. Everything else, including the WebSocket commands `message_center/*` behind the page, is internal and may change.
 
-**`message_id`** is the handle of a message wherever it appears (responses, entity attributes, events, script variables, the push `tag`, the button ids, the page): an opaque string of 16 hexadecimal characters, stable for all generations of a message and across restarts, without `:` or `|`. It has no structure to read; the origin and the title stand next to it wherever it appears.
+**`message_id`** is the handle of a message wherever it appears (responses, entity attributes, events, script variables, the push `tag`, the tap target (`clickAction`/`url`), the button ids, the page): an opaque string of 16 hexadecimal characters, stable for all generations of a message and across restarts, without `:` or `|`. It has no structure to read; the origin and the title stand next to it wherever it appears.
 
 **Wrong fields** (missing, empty, too long, wrong type, or data that cannot be stored as JSON) are rejected by Home Assistant before Message Center runs, as a schema error ("Invalid data"), the same for every action. It carries no error code of Message Center, and in a script `continue_on_error` does not cover it. The error codes below are the rejections of Message Center itself.
 
@@ -235,7 +235,8 @@ Only what is listed here is meant to be used by automations and other integratio
 | `target` | accepted and ignored: Message Center chooses the recipients |
 
 - **Effect:** the message is classified, stored and delivered according to priority and delivery rules. The same origin and title increase the counter of the existing message.
-- **Keys Message Center sets in `data`:** always `tag` (the `message_id`) and `group`; on Android always `channel` (`message_center`, or the alarm channel for priority 3) and for priority 3 also `ttl`, `priority`, `importance`; on iOS `push.interruption-level` (and a critical sound for priority 3). Its own buttons are **appended** to `actions`; the caller's buttons stay (see [Buttons on the push](#buttons-on-the-push) for the order on an alarm).
+- **Keys Message Center sets in `data`:** always `tag` (the `message_id`) and `group`; on Android always `channel` (`message_center`, or the alarm channel for priority 3) and for priority 3 also `ttl`, `priority`, `importance`; on iOS `push.interruption-level` (and a critical sound for priority 3). Its own buttons are **appended** to `actions`; the caller's buttons stay (see [Buttons on the push](#buttons-on-the-push) for the order on an alarm). The target of a tap, `clickAction` on Android and `url` on iOS, is set only when neither of the two keys in the caller's `data` holds a target (a key that is `null` or empty text holds none), and only on the phone of an administrator (see [Tapping the push](#tapping-the-push)).
+- **Push text:** the push of a message no kind takes ends with a blank line and "⚠ Not classified yet – please classify it in Message Center" ("⚠ Noch nicht eingeordnet – bitte im Message Center bewerten" in a German Home Assistant). The line is in the push only; the message keeps its text everywhere else (store, history, events, scripts, the page).
 - **Rights:** any user who may call actions. The caller's context is stored and passed on to the pushes, the light commands and the effect script.
 - **May be repeated:** yes; a repeat counts.
 - **Result:** no response data. A rejection is an error: `store_full` (200 unfinished messages) or `not_ready` (no Message Center loaded, its store cannot be written, or it is being reloaded). No error means *accepted*, that is stored and confirmed on disk; it does not mean delivered. A call that is cancelled while Message Center writes (an automation in mode `restart`) is not accepted.
@@ -256,7 +257,7 @@ Response when requested: `{"result": "accepted", "message_id": …, "action": "c
 | `updated` | An open message (waiting, sending, retrying, unclear) took the counter, text and data; no second message. An unclear one runs again. |
 | `bundled` | The message was already delivered and its kind's spacing is still running: counter up, the push on the phone replaced ("3x …"), no new push cycle, so no light pulse or script. `state` stays `delivered`. |
 
-Rights, repeats and rejections otherwise as `notify.message_center`.
+Keys set in `data`, the push text, rights, repeats and rejections otherwise as `notify.message_center`: a `send` without `kind` that no kind takes gets the line at the end of the push and the target to classify it too.
 
 ### `message_center.discard`
 
@@ -312,6 +313,19 @@ Message states are `waiting`, `sending`, `retrying`, `delivered`, `unclear`, `di
 The order is: the caller's own buttons, then *Later* (the first, then the second duration), then *To assistant*, then *End alarm*, except that *End alarm* moves to the third place at the latest. Nothing is removed: Android shows the first three buttons, the iPhone all of them. On Android, *To assistant* is therefore the first to lose its visible place, then *Later*; from three own buttons on, the third own button stands behind *End alarm*.
 
 Each button can be turned off. A tap is handled in the context of the user of that phone, also for *Later*. *Later* and *To assistant* check the right the actions check: the user of the phone must be active and allowed to control an entity of Message Center. A tap from the phone of a user who may only read, or who is deactivated, is ignored and logged without content; the buttons still show on that phone, so do not choose such a phone as a recipient if its user should not use them. (A deleted user is refused too, as a safeguard: Home Assistant removes the phone's registration together with the user.) *End alarm* works from any phone whose Companion App reaches Home Assistant, because ending a running alarm harms nothing.
+
+### Tapping the push
+
+The option *Open on tap* decides what a tap on the push opens:
+
+- **Home Assistant** (default, `tap_target: home`): Message Center sets no target; the Companion App opens as usual.
+- **Message Center** (`tap_target: center`): the page opens with this message unfolded, on the tab *Open* or in the history: `/message-center?message=<message_id>`.
+
+A message no kind takes opens the dialog to classify it, whatever the option says: `/message-center?classify=<message_id>`. If its entry under *New* is gone by then (classified or dismissed), the page shows the message. Once a kind takes the message, its pushes, a replacement too, follow the option again; this holds for a message that waits while it is classified as well.
+
+A sender that puts a target into `clickAction` or `url` in `data` keeps it: Message Center then sets neither key, on neither platform, also for a message no kind takes. A key that is `null` or empty text (as blueprints often pass it when no target was chosen) is no target; Message Center then sets its own. A test push from the settings tab opens the page itself with the option *Message Center*.
+
+The page is for administrators only, so Message Center sets these targets only on the phones of administrators (the user the Companion App was registered with). The phone of another user, or one whose user it cannot tell, opens Home Assistant as before; the line on a message no kind takes shows there too.
 
 ### Scripts: own effect and forwarding
 
@@ -377,7 +391,7 @@ Titles and texts of messages are treated as sensitive.
 
 - Texts are stored in Home Assistant's `.storage` (`message_center.messages`, `message_center.history`), shown on the page and returned by `message_center.list`, all for administrators only, and of course sent to the phones.
 - Texts never appear in entity attributes, the logbook or repair issues, and not in any event except `message_center_forwarded`.
-- Titles appear in attributes, the logbook and events. The option "keep titles out of history and attributes" replaces them there by origin and kind; it also holds for the logbook entry of a forward, the push `tag` and the button ids, which carry only the opaque `message_id`.
+- Titles appear in attributes, the logbook and events. The option "keep titles out of history and attributes" replaces them there by origin and kind; it also holds for the logbook entry of a forward, the push `tag`, the tap target and the button ids, which carry only the opaque `message_id`.
 - **Home Assistant's recorder stores events** in its database. `message_center_forwarded` carries the text and the note, and `mobile_app_notification_action` (the tapped button, fired by the Companion App) carries the typed note and the button id. Who does not want them there excludes the event types in `configuration.yaml`:
 
   ```yaml

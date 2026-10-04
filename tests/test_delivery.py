@@ -42,7 +42,7 @@ from .conftest import (
     night_rule_data,
     slow_writes,
 )
-from .test_services import TEXT, TITLE, message_id_of, notify, open_items
+from .test_services import NOTE, TEXT, TITLE, message_id_of, notify, open_items
 
 
 async def tick(
@@ -1592,7 +1592,8 @@ async def test_new_text_during_the_first_push_follows_as_one_replacement(
     """Text changed while the first push is out: the new text follows, once.
 
     What the first push carried is noted for the recipient. The replacement
-    leaves only when the result of the first push is saved.
+    leaves only when the result of the first push is saved. No kind takes
+    the message, so the replacement keeps the note below the text.
     """
     book = center_entry.runtime_data.book
     calls: list[ServiceCall] = []
@@ -1609,7 +1610,7 @@ async def test_new_text_during_the_first_push_follows_as_one_replacement(
     with slow_writes():
         await repeat(hass, "v1")
         await repeat(hass, "v2")
-        assert [call.data["message"] for call in calls] == ["v1"]
+        assert [call.data["message"] for call in calls] == ["v1" + NOTE]
         msg = book.get(message_id_of(hass))
         status = msg.recipients[PHONE_ACTION]
         assert msg.state is MessageState.SENDING
@@ -1617,7 +1618,7 @@ async def test_new_text_during_the_first_push_follows_as_one_replacement(
 
         release.set()
         await hass.async_block_till_done()
-    assert [call.data["message"] for call in calls] == ["v1", "v2"]
+    assert [call.data["message"] for call in calls] == ["v1" + NOTE, "v2" + NOTE]
     assert calls[1].data["title"] == f"2x {TITLE}"
     assert seen == ["sending", "delivered"]
     assert (status.delivered_revision, status.delivered_count) == (2, 2)
@@ -1651,7 +1652,11 @@ async def test_new_text_during_a_retry_follows_as_one_replacement(
         assert len(calls) == 2
         release.set()
         await hass.async_block_till_done()
-    assert [call.data["message"] for call in calls] == ["v1", "v1", "v2"]
+    assert [call.data["message"] for call in calls] == [
+        "v1" + NOTE,
+        "v1" + NOTE,
+        "v2" + NOTE,
+    ]
     assert calls[2].data["title"] == f"2x {TITLE}"
     msg = book.get(message_id_of(hass))
     status = msg.recipients[PHONE_ACTION]

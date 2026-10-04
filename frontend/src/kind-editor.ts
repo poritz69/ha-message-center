@@ -53,6 +53,8 @@ export class MessageCenterKindEditor extends LitElement {
   @state() private _busy = false;
   /** The condition was changed by hand: a late answer about the automation does not reset it. */
   private _touched = false;
+  /** The values the dialog opened with; any input replaces them by a new copy. */
+  private _openedWith: FormData = {};
   /** The name the dialog filled in itself; it follows a pick from "new" until it is typed over. */
   private _autoName = "";
   private _timer?: ReturnType<typeof setTimeout>;
@@ -119,6 +121,7 @@ export class MessageCenterKindEditor extends LitElement {
     const s = startState(source, null, this._kinds);
     if (fresh) {
       this._data = this._initialData(source, s.name);
+      this._openedWith = this._data;
       this._picked = "";
     } else if (!String(this._data.name ?? "").trim() || this._data.name === this._autoName) {
       this._data = { ...this._data, name: s.name };
@@ -133,6 +136,11 @@ export class MessageCenterKindEditor extends LitElement {
     this._matches = undefined;
     void this._askOrigin(sourceOrigin(source), true);
     this._askMatchesSoon(0);
+  }
+
+  /** Whether something was entered or chosen since the dialog opened: the condition, an entry of "new", a field. */
+  get edited(): boolean {
+    return this._touched || this._picked !== "" || this._data !== this._openedWith;
   }
 
   private _use(s: DialogStart) {

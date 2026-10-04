@@ -7,6 +7,7 @@
 import { LitElement, css, html, nothing, render } from "lit";
 import { property } from "lit/decorators.js";
 import "./panel";
+import { rowKey } from "./deep-link";
 import type { Config, Kind, KindMatches, MatchedPair, MessageEntry, Messages, OriginMessages, Overview, ScanResult } from "./types";
 
 // Address parameters, for screenshots:
@@ -17,6 +18,11 @@ import type { Config, Kind, KindMatches, MatchedPair, MessageEntry, Messages, Or
 //   ?kind=one            the kind dialog: one (from "new", an automation with one message), many (one with
 //                        several), advanced (one, condition opened), edit, switched (edit of a kind whose automation
 //                        sends one message), blank, duplicate, overlap, scan
+//   ?push=message        as a tapped push opens the page with the option "Message Center": "?message=<id>" of a
+//                        delivered message that came for the third time (two earlier ones in "older"; only the newest
+//                        unfolds); ?push=classify: the push of a message no kind takes ("?classify=<id>"); ?push=missing:
+//                        a message no longer stored. The page follows the real link (best with ?only=wide: one frame
+//                        follows it).
 const params = new URLSearchParams(location.search);
 document.documentElement.dataset.theme = params.get("theme") === "light" ? "light" : "dark";
 const en = params.get("lang") === "en";
@@ -416,6 +422,26 @@ const englishExample = (): Example => {
 
 const { messages, overview, config, scan, sends: sentBy, sent, nightEntity } = en ? englishExample() : germanExample();
 
+// ?push=…: the address a tapped push opens, with the id of an example message (see above)
+const push = params.get("push");
+// the history store: empty, except for the earlier generations of the message a tapped push shows
+const older: MessageEntry[] = [];
+if (push === "message" || push === "classify" || push === "missing") {
+  const target = push === "message" ? messages.recent[1] : messages.open[1];
+  if (push === "message") {
+    target.generation = 3;
+    for (const [generation, minutes] of [[2, 1630], [1, 3070]] as const) {
+      older.push({ ...target, generation, since: ago(minutes), accepted_at: ago(minutes), updated_at: ago(minutes),
+        delivered_at: ago(minutes), ended_at: ago(minutes), events: [] });
+    }
+  }
+  const query = new URLSearchParams(location.search);
+  query.delete("push");
+  if (push === "missing") query.set("message", exampleId("gone"));
+  else query.set(push, target.message_id);
+  history.replaceState(null, "", `${location.pathname}?${query.toString()}`);
+}
+
 const listeners: (() => void)[] = [];
 const changed = () => listeners.forEach((l) => l());
 
@@ -522,7 +548,7 @@ const hass = {
     switch (String(m.type).split("/")[1]) {
       case "overview": return overview;
       case "messages": return messages;
-      case "history": return { history: [] };
+      case "history": return { history: older };
       case "config": return config;
       case "save": {
         const id = m.kind === "kind" ? saveKind(m) : String(m.subentry_id ?? `g${config.groups.length + 1}`);
@@ -564,6 +590,8 @@ if (only) {
   `, document.body);
 }
 if (en) document.documentElement.lang = "en";
+// room for the dialog a tapped push opens
+if (push === "classify") document.querySelectorAll<HTMLElement>("message-center-panel").forEach((el) => { el.style.minHeight = "1500px"; });
 
 interface KindEditorInside {
   updateComplete: Promise<unknown>;
@@ -610,7 +638,7 @@ if (tab) {
     void panel.updateComplete.then(async () => {
       await panel._select(tab);
       if (params.get("scan")) await (panel as unknown as { _runScan(): Promise<void> })._runScan();
-      if (params.get("unfold")) panel._openRows = new Set([tab === "open" ? messages.open[0].message_id : messages.recent[0].message_id]);
+      if (params.get("unfold")) panel._openRows = new Set([rowKey(tab === "open" ? messages.open[0] : messages.recent[0])]);
       const demo = params.get("kind");
       if (demo) {
         // room for the dialog below the page
